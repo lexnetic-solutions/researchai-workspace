@@ -767,3 +767,30 @@ enabled — never per part. Short scripts keep the single-invocation fast path.
   non-strict-header fallback); existing tests now assert header-exact
   durations. Battery: 98 lib + 20 contract locks + 1 live E2E, 0 warnings;
   engine untouched; tsc/build clean.
+
+## Post-plan polish — chunk retry + parts resume
+
+Chunked synthesis (previous section) now recovers from failures instead of
+throwing away rendered audio:
+
+- **Per-chunk retry**: every chunk gets two automatic retries (1 s, 2 s
+  backoff) for transient subprocess failures; the surfaced error keeps the
+  chunk position. Deterministic problems (piper/model missing, `say`
+  unresponsive) are caught by a preflight check before any chunk runs, so
+  they neither burn retries nor touch the cache.
+- **Parts resume**: rendered parts are tracked in `tts-parts.json` (written
+  beside the parts). The manifest is keyed by a SHA-256 signature over
+  script text + provider identity (voice model for piper, voice name for
+  `say`; speech rate deliberately excluded — a speed change re-renders), so
+  re-running the same narration resumes at the first missing chunk and a
+  fully cached run skips synthesis entirely. Success clears the cache;
+  vanished part files, a corrupt manifest, or a manifest longer than the
+  current chunker produces are all treated as "no cache", never errors.
+- **Concat safety**: part formats are now compared against the first part
+  (format tag, channels, sample rate, bit depth) before splicing, and the
+  output header propagates the real format tag instead of hardcoding PCM.
+- Tests: 2 new — a counting fake piper proves retry+resume end-to-end
+  (chunks 1–2 rendered once, chunk 3 exhausts 3 attempts, resume synthesizes
+  only chunks 3–4, cache cleared on success) and a signature/cache unit
+  test. Battery: 100 lib + 20 contract locks + 1 live E2E, 0 warnings;
+  tsc/build clean.

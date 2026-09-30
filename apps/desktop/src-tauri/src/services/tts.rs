@@ -393,6 +393,8 @@ impl TextToSpeechProvider for MacOsSayProvider {
 
 /// A `fmt ` chunk, parsed enough to concatenate safely.
 struct WavFormat {
+    /// 1 = integer PCM, 3 = IEEE float.
+    audio_format: u16,
     channels: u16,
     sample_rate: u32,
     bits_per_sample: u16,
@@ -450,6 +452,7 @@ fn read_wav_format(path: &Path) -> std::io::Result<Option<WavFormat>> {
                     f.read_exact(&mut junk)?;
                 }
                 return Ok(Some(WavFormat {
+                    audio_format,
                     channels,
                     sample_rate,
                     bits_per_sample: bits,
@@ -593,15 +596,129 @@ fn split_sentences(text: &str) -> Vec<String> {
     sentences
 }
 
+/// Small on-disk manifest (`tts-parts.json`, written next to the part
+/// files) that lets a re-run reuse already-rendered chunks instead of
+/// re-synthesizing the whole narration. The signature guards every entry:
+/// any edit to the script (or a provider switch) changes it and all cached
+/// parts are ignored.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PartsManifest {
+    /// Hex SHA-256 over script + provider identity.
+    signature: String,
+    /// Absolute part paths, in chunk order.
+    parts: Vec<String>,
+}
+
+/// Cache signature: what is spoken and by whom. Speech rate is deliberately
+/// excluded — a speed change alters each subprocess run, so the cache must
+/// not be trusted across it.
+fn parts_signature(provider_id: &str, text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(provider_id.as_bytes());
+    h.update([0u8]);
+    h.update(text.as_bytes());
+    hex::encode(h.finalize())
+}
+
+/// Load still-valid cached part paths for `sig`, dropping entries whose
+/// files vanished and treating a missing/corrupt manifest as empty cache.
+fn load_cached_parts(out_dir: &Path, sig: &str) -> Vec<PathBuf> {
+    let manifest_path = out_dir.join("tts-parts.json");
+    let Ok(raw) = std::fs::read(&manifest_path) else {
+        return Vec::new();
+    };
+    let m: PartsManifest = match serde_json::from_slice(&raw) {
+        Ok(m) => m,
+        Err(_) => return Vec::new(),
+    };
+    if m.signature != sig {
+        return Vec::new();
+    }
+    m.parts
+        .into_iter()
+        .map(PathBuf::from)
+        .filter(|p| p.is_file())
+        .collect()
+}
+
+/// Persist the manifest (best-effort: losing the cache is never fatal).
+fn save_cached_parts(out_dir: &Path, sig: &str, parts: &[PathBuf]) {
+    if parts.is_empty() {
+        return;
+    }
+    let manifest_path = out_dir.join("tts-parts.json");
+    let m = PartsManifest {
+        signature: sig.to_string(),
+        parts: parts
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect(),
+    };
+    match serde_json::to_vec_pretty(&m) {
+        Ok(json) => {
+            if std::fs::write(&manifest_path, json).is_err() {
+                log::warn!(
+                    target: "researchai::tts",
+                    "could not write the TTS parts manifest; resume will re-render"
+                );
+            }
+        }
+        Err(_) => {
+            log::warn!(
+                target: "researchai::tts",
+                "could not serialize the TTS parts manifest; resume will re-render"
+            );
+        }
+    }
+}
+
+/// Seconds between chunk retries (fixed schedule; total added delay ≈ 3 s).
+const CHUNK_RETRY_DELAYS_SECS: &[u64] = &[1, 2];
+
+/// Render one chunk with a small fixed retry schedule for transient
+/// subprocess failures. The final error keeps the chunk position context.
+fn render_chunk_with_retry(
+    p: &dyn ChunkedRenderInternal,
+    text: &str,
+    name_hint: &str,
+    chunk_index: usize,
+    chunk_total: usize,
+) -> AppResult<TtsAudio> {
+    let mut last: Option<AppError> = None;
+    for attempt in 0..=CHUNK_RETRY_DELAYS_SECS.len() {
+        if attempt > 0 {
+            log::warn!(
+                target: "researchai::tts",
+                "chunk {chunk_index}/{chunk_total} failed, retrying (attempt {attempt}/{})",
+                CHUNK_RETRY_DELAYS_SECS.len()
+            );
+            std::thread::sleep(std::time::Duration::from_secs(
+                CHUNK_RETRY_DELAYS_SECS[attempt - 1],
+            ));
+        }
+        match p.render_internal(text, name_hint, chunk_index, chunk_total) {
+            Ok(audio) => return Ok(audio),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(last.expect("retry loop runs at least once"))
+}
+
 /// Chunked orchestration shared by both providers: split long scripts at
-/// sentence boundaries, render each piece via one subprocess invocation,
-/// then join the part WAVs into a single exact-size RIFF file. Short
-/// scripts take the provider's single-invocation fast path.
+/// sentence boundaries, render each piece via one subprocess invocation
+/// (with per-chunk retries), then join the part WAVs into a single
+/// exact-size RIFF file. Rendered parts are cached in a manifest so a
+/// failed run resumes at the first missing chunk. Short scripts take the
+/// provider's single-invocation fast path.
 fn run_chunked(
     p: &dyn ChunkedRenderInternal,
     text: &str,
     name_hint: &str,
 ) -> AppResult<TtsAudio> {
+    // Missing tools are a deterministic error: fail fast, no retries.
+    p.preflight()?;
+
     let chunks = chunk_text(text);
     if chunks.len() <= 1 {
         return p.render_internal(
@@ -613,43 +730,67 @@ fn run_chunked(
     }
 
     let total = chunks.len();
-    let mut parts: Vec<PathBuf> = Vec::with_capacity(total);
-    let result = (1..=total).try_for_each(|i| {
-        match p.render_internal(&chunks[i - 1], name_hint, i, total) {
-            Ok(audio) => {
-                parts.push(PathBuf::from(&audio.path));
-                Ok(())
-            }
-            Err(e) => Err(e),
+    let sig = parts_signature(&p.provider_id(), text);
+    let cached = load_cached_parts(p.out_dir(), &sig);
+    // A manifest listing MORE parts than the current chunker produces means
+    // the chunking changed since it was written: ignore it entirely.
+    let mut parts = if cached.len() <= total { cached } else { Vec::new() };
+    if !parts.is_empty() {
+        if parts.len() == total {
+            log::info!(
+                target: "researchai::tts",
+                "reusing {total} previously rendered parts (manifest match)"
+            );
+            return finish_chunked(p, &parts, name_hint);
         }
-    });
-
-    if let Err(e) = result {
-        log::warn!(
+        log::info!(
             target: "researchai::tts",
-            "chunked synthesis stopped after {}/{} parts: {e}",
-            parts.len(),
+            "resuming chunked synthesis at part {}/{}",
+            parts.len() + 1,
             total
         );
-        p.set_chunk_failed();
-        for part in &parts {
-            remove_file_best_effort(part);
-        }
-        return Err(e);
     }
+    for i in parts.len() + 1..=total {
+        match render_chunk_with_retry(p, &chunks[i - 1], name_hint, i, total) {
+            Ok(audio) => parts.push(PathBuf::from(&audio.path)),
+            Err(e) => {
+                log::warn!(
+                    target: "researchai::tts",
+                    "chunked synthesis stopped after {}/{} parts: {e}",
+                    parts.len(),
+                    total
+                );
+                p.set_chunk_failed();
+                // Cache what rendered so a retry resumes from here; keep the
+                // part files on disk (they are the cache).
+                save_cached_parts(p.out_dir(), &sig, &parts);
+                return Err(e);
+            }
+        }
+    }
+    finish_chunked(p, &parts, name_hint)
+}
 
+/// Join rendered parts into the final audio, clear the parts cache and
+/// transcode to MP3 when enabled. Shared by the fresh and resumed paths.
+fn finish_chunked(
+    p: &dyn ChunkedRenderInternal,
+    parts: &[PathBuf],
+    name_hint: &str,
+) -> AppResult<TtsAudio> {
+    let out_dir = p.out_dir();
     // One ffmpeg transcode for the whole narration, when enabled + possible.
     if p.mp3_enabled() && crate::services::transcription::ffmpeg_available() {
-        match concat_wavs(&parts, &p.out_dir(), name_hint) {
-            Ok(wav) => match transcode_to_mp3(&wav, &p.out_dir()) {
+        match concat_wavs(parts, out_dir, name_hint) {
+            Ok(wav) => match transcode_to_mp3(&wav, out_dir) {
                 Ok(mp3) => {
                     let bytes = std::fs::metadata(&mp3)?.len();
-                    let duration =
-                        wav_duration_ms_from_header(&wav)?.unwrap_or_else(|| {
-                            wav_duration_ms(std::fs::metadata(&wav).map(|m| m.len()).unwrap_or(0))
-                        });
+                    let duration = wav_duration_ms_from_header(&wav)?.unwrap_or_else(|| {
+                        wav_duration_ms(std::fs::metadata(&wav).map(|m| m.len()).unwrap_or(0))
+                    });
                     parts.iter().for_each(|f| remove_file_best_effort(f));
                     remove_file_best_effort(&wav);
+                    remove_file_best_effort(&out_dir.join("tts-parts.json"));
                     return Ok(TtsAudio {
                         path: mp3.to_string_lossy().into_owned(),
                         format: "mp3".into(),
@@ -668,8 +809,9 @@ fn run_chunked(
     }
 
     // MP3 unavailable or the transcode failed: keep the concatenated WAV.
-    let final_wav = concat_wavs(&parts, &p.out_dir(), name_hint)?;
+    let final_wav = concat_wavs(parts, out_dir, name_hint)?;
     parts.iter().for_each(|f| remove_file_best_effort(f));
+    remove_file_best_effort(&out_dir.join("tts-parts.json"));
     TtsAudio::from_wav(&final_wav)
 }
 
@@ -678,6 +820,11 @@ pub(crate) trait ChunkedRenderInternal {
     /// Flag a partway failure so [`TextToSpeechProvider::is_chunk_error`]
     /// can report it (part files remain on disk for debugging).
     fn set_chunk_failed(&self);
+    /// Deterministic tooling check run once before any chunk is rendered;
+    /// failing here skips retries and the parts cache entirely.
+    fn preflight(&self) -> AppResult<()>;
+    /// Stable identity feeding the parts-cache signature.
+    fn provider_id(&self) -> String;
     fn render_internal(
         &self,
         text: &str,
@@ -690,6 +837,28 @@ pub(crate) trait ChunkedRenderInternal {
 }
 
 impl ChunkedRenderInternal for PiperProvider {
+    fn preflight(&self) -> AppResult<()> {
+        if !self.piper_path.exists() {
+            return Err(AppError::msg(format!(
+                "Piper was not found at “{}” — install piper (e.g. `brew install piper`) \
+                 or set its path in Settings → Speech.",
+                self.piper_path.display()
+            )));
+        }
+        if !self.voice_model_path.exists() {
+            return Err(AppError::msg(format!(
+                "The Piper voice model was not found at “{}” — download a voice from the \
+                 Piper samples page (an .onnx file) and set it in Settings → Speech.",
+                self.voice_model_path.display()
+            )));
+        }
+        Ok(())
+    }
+    fn provider_id(&self) -> String {
+        // The voice model is the identity; the binary path is deliberately
+        // excluded so a re-installed piper can resume cached parts.
+        format!("piper:{}", self.voice_model_path.display())
+    }
     fn render_internal(
         &self,
         text: &str,
@@ -712,6 +881,24 @@ impl ChunkedRenderInternal for PiperProvider {
 }
 
 impl ChunkedRenderInternal for MacOsSayProvider {
+    fn preflight(&self) -> AppResult<()> {
+        let ok = Command::new(&self.binary)
+            .arg("-v")
+            .arg("?")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !ok {
+            return Err(AppError::msg(
+                "macOS say is not responding — the `say` command is built into macOS; \
+                 if this persists, switch to Piper in Settings → Speech.",
+            ));
+        }
+        Ok(())
+    }
+    fn provider_id(&self) -> String {
+        format!("macos-say:{}", self.voice)
+    }
     fn render_internal(
         &self,
         text: &str,
@@ -757,6 +944,29 @@ pub(crate) fn concat_wavs(parts: &[PathBuf], out_dir: &Path, name_hint: &str) ->
                 "{} is not a strictly parseable PCM WAV file.",
                 part.display()
             )))?;
+        let part_fmt = read_wav_format(part)
+            .map_err(|e| AppError::msg(format!("Cannot read {}: {e}", part.display())))?
+            .ok_or_else(|| AppError::msg(format!(
+                "{} is not a strictly parseable PCM WAV file.",
+                part.display()
+            )))?;
+        if part_fmt.audio_format != fmt.audio_format
+            || part_fmt.channels != fmt.channels
+            || part_fmt.sample_rate != fmt.sample_rate
+            || part_fmt.bits_per_sample != fmt.bits_per_sample
+        {
+            return Err(AppError::msg(format!(
+                "{} does not match the first part's audio format \
+                 ({} Hz, {} ch, {} bit vs {} Hz, {} ch, {} bit) — refusing to concatenate.",
+                part.display(),
+                part_fmt.sample_rate,
+                part_fmt.channels,
+                part_fmt.bits_per_sample,
+                fmt.sample_rate,
+                fmt.channels,
+                fmt.bits_per_sample
+            )));
+        }
         let plen = size.saturating_sub(header);
         if plen % bytes_per_frame != 0 {
             return Err(AppError::msg(format!(
@@ -783,7 +993,7 @@ pub(crate) fn concat_wavs(parts: &[PathBuf], out_dir: &Path, name_hint: &str) ->
     w.write_all(b"WAVE")?;
     w.write_all(b"fmt ")?;
     w.write_all(&16u32.to_le_bytes())?;
-    w.write_all(&1u16.to_le_bytes())?; // integer PCM output
+    w.write_all(&fmt.audio_format.to_le_bytes())?; // PCM or float, as the parts
     w.write_all(&fmt.channels.to_le_bytes())?;
     w.write_all(&fmt.sample_rate.to_le_bytes())?;
     w.write_all(&(byte_rate as u32).to_le_bytes())?;
@@ -934,6 +1144,23 @@ mod tests {
         script
     }
 
+    /// Fake `piper` that counts every invocation into `dir/calls.txt` and
+    /// exits 5 for calls `fail_from..=fail_to` (0/0 = never fails); otherwise
+    /// writes the same valid 24 kHz WAV as [`write_fake_piper`].
+    fn write_counting_fake_piper(dir: &Path, fail_from: usize, fail_to: usize) -> PathBuf {
+        let script = dir.join(format!("counting-piper-{fail_from}-{fail_to}.sh"));
+        let counter = dir.join("calls.txt").display().to_string();
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nout=\"\"; prev=\"\"\nfor a in \"$@\"; do\n  if [ \"$prev\" = \"--output_file\" ]; then out=\"$a\"; fi\n  prev=\"$a\"\ndone\nc=\"{counter}\"\nn=$(cat \"$c\" 2>/dev/null) || true\n[ -z \"$n\" ] && n=0\nn=$((n+1))\necho \"$n\" > \"$c\"\nif [ \"$n\" -ge {fail_from} ] && [ \"$n\" -le {fail_to} ]; then exit 5; fi\ncat > /dev/null\nprintf 'RIFF' > \"$out\"\nprintf '\\x90\\x01\\x00\\x00' >> \"$out\"\nprintf 'WAVE' >> \"$out\"\nprintf 'fmt ' >> \"$out\"\nprintf '\\x10\\x00\\x00\\x00' >> \"$out\"\nprintf '\\x01\\x00' >> \"$out\"\nprintf '\\x01\\x00' >> \"$out\"\nprintf '\\xc0\\x5d\\x00\\x00' >> \"$out\"\nprintf '\\x80\\xbb\\x00\\x00' >> \"$out\"\nprintf '\\x02\\x00' >> \"$out\"\nprintf '\\x10\\x00' >> \"$out\"\nprintf 'data' >> \"$out\"\nprintf '\\x90\\x01\\x00\\x00' >> \"$out\"\nhead -c 400 /dev/zero >> \"$out\"\nexit 0\n"
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        script
+    }
+
     fn piper(dir: &Path, mp3: bool) -> PiperProvider {
         let out = dir.join("out");
         std::fs::create_dir_all(&out).unwrap();
@@ -1041,6 +1268,66 @@ mod tests {
             .filter(|n| n.contains("-part"))
             .collect();
         assert!(leftovers.is_empty(), "leftover parts: {leftovers:?}");
+    }
+
+    #[test]
+    fn retry_and_resume_recover_a_multi_chunk_narration() {
+        let dir = TempDir::new_with_label("tts-resume");
+        // Calls 3-5 fail (chunk 3 exhausts its three attempts); both fakes
+        // share one counter so total invocations are observable.
+        let failing = write_counting_fake_piper(dir.path(), 3, 5);
+        let good = write_counting_fake_piper(dir.path(), 0, 0);
+        let prov_bad = piper(dir.path(), false).with_piper_binary(&failing);
+        let prov_good = piper(dir.path(), false).with_piper_binary(&good);
+
+        // 3 words × 240 = 720 words → 4 chunks.
+        let text = "Resume narration sentence. ".repeat(240);
+        let err = prov_bad.render(&text, "resume").unwrap_err().to_string();
+        assert!(err.contains("chunk 3 of"), "{err}");
+        assert!(prov_bad.is_chunk_error());
+        // Chunks 1-2 rendered once each; chunk 3 burned all three attempts.
+        let calls = || {
+            std::fs::read_to_string(dir.path().join("calls.txt"))
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+        assert_eq!(calls(), "5");
+        let manifest = dir.path().join("out").join("tts-parts.json");
+        assert!(manifest.exists(), "failed run must cache its good parts");
+
+        // Second run resumes: only chunks 3-4 are synthesized (calls 6-7).
+        let audio = prov_good.render(&text, "resume").unwrap();
+        let raw = std::fs::read(&audio.path).unwrap();
+        assert_eq!(raw.len(), 44 + 4 * 400, "parts 1-2 reused, 3-4 fresh");
+        assert_eq!(calls(), "7");
+        // Success clears the parts cache.
+        assert!(!manifest.exists());
+    }
+
+    #[test]
+    fn parts_manifest_cache_is_signature_guarded() {
+        let dir = TempDir::new_with_label("tts-manifest");
+        let out = dir.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let p1 = write_minimal_wav(&out, "p1.wav", 100);
+
+        // Signature covers script + provider identity (not speed).
+        let sig_a = parts_signature("prov-a", "text one");
+        assert_ne!(sig_a, parts_signature("prov-a", "text two"));
+        assert_ne!(sig_a, parts_signature("prov-b", "text one"));
+
+        save_cached_parts(&out, &sig_a, &[p1.clone()]);
+        assert_eq!(load_cached_parts(&out, &sig_a), vec![p1.clone()]);
+        assert!(load_cached_parts(&out, "other-sig").is_empty());
+
+        // Vanished part files are dropped from the cache view.
+        std::fs::remove_file(&p1).unwrap();
+        assert!(load_cached_parts(&out, &sig_a).is_empty());
+
+        // Corrupt manifest is treated as an empty cache, never an error.
+        std::fs::write(out.join("tts-parts.json"), b"{not json").unwrap();
+        assert!(load_cached_parts(&out, &sig_a).is_empty());
     }
 
     #[test]
