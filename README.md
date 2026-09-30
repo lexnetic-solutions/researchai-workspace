@@ -32,7 +32,7 @@ services/
   document-engine/   Python sidecar: parsing/OCR/embeddings (Docling, fastembed)
 scripts/             setup, dev and release helpers
 docs/                 ARCHITECTURE · AI · DATABASE · RAG · CITATIONS · SECURITY ·
-                     PACKAGING · PHASE_REPORTS
+                     PACKAGING · SPEECH_SETUP · PHASE_REPORTS
 tests/               cross-cutting test fixtures (Phase 1+)
 .github/workflows/   CI: lint + test + desktop build
 ```
@@ -62,7 +62,10 @@ pnpm desktop:dev
 
 Then: create a project → Library → Import files/folder. Documents flow
 through `waiting → parsing → indexing → ready` (embeddings computed during
-indexing); click a title to read the extracted text. Open **Search** for
+indexing); click a title to read the extracted text. Optional speech
+(offline STT/TTS via piper + whisper.cpp) is covered by
+[docs/SPEECH_SETUP.md](docs/SPEECH_SETUP.md), including a setup checker at
+`scripts/dev/check-speech-setup.sh`. Open **Search** for
 hybrid keyword + semantic retrieval — *Show retrieval debug* exposes
 channels, scores and index coverage for every query.
 
