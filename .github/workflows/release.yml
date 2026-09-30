@@ -36,6 +36,12 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
+    env:
+      # Secrets render to empty strings when unset — passing them anyway
+      # makes Tauri treat APPLE_SIGNING_IDENTITY="" as an explicit (empty)
+      # identity and codesign fails. Gate the signing steps on this instead.
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+      HAS_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -82,7 +88,7 @@ jobs:
       # macOS signing: ad-hoc when secrets are absent (Gatekeeper bypass is
       # documented in PACKAGING.md).
       - name: Import macOS signing certificate
-        if: runner.os == 'Macos' && env.APPLE_CERTIFICATE != ''
+        if: runner.os == 'Macos' && env.HAS_APPLE_CERT == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -99,12 +105,17 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_FILE"
           rm -f "$CERT_FILE"
 
-      - name: Build installers
+      - name: Build installers (signed + notarized)
+        if: env.HAS_SIGNING_IDENTITY == 'true'
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm --filter @researchai/desktop exec tauri build --target ${{ matrix.target }}
+
+      - name: Build installers (ad-hoc)
+        if: env.HAS_SIGNING_IDENTITY != 'true'
         run: pnpm --filter @researchai/desktop exec tauri build --target ${{ matrix.target }}
 
       - name: Upload artefacts
