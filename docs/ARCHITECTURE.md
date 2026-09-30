@@ -38,8 +38,10 @@ built so that every replaceable technology sits behind an internal interface
 | Python sidecar for parsing | Docling is Python-native; isolates heavy deps from the Rust core; crash-isolated |
 | `pnpm` workspace packages | shared-types contracts; future research/citation/retrieval cores stay reusable |
 | Managed workspace dir | Projects stay portable; `managed-copy` default, `link-original` opt-in |
-| Interface boundaries | `AIProvider` (Phase 3: llama.cpp + echo), `VectorStore` (Phase 2: sqlite-vec), `DocumentParser` (Phase 1: engine sidecar); evidence matrices (Phase 4) sit on retrieval + AIProvider; `SpeechToTextProvider`, `TextToSpeechProvider`, `ExportProvider` still ahead |
+| Interface boundaries | `AIProvider` (Phase 3: llama.cpp + echo), `VectorStore` (Phase 2: sqlite-vec), `DocumentParser` (Phase 1: engine sidecar), `ExportProvider` (Phase 6: Markdown/BibTeX/RIS native + DOCX/PDF via the engine), `SpeechToTextProvider` (Phase 7: user-installed whisper.cpp CLI, one batch subprocess per job), `TextToSpeechProvider` (Phase 8: user-installed Piper, cfg-gated macOS `say` fallback) |
+| Export split | Text/reference formats (Markdown, BibTeX, RIS) render natively in Rust — deterministic and byte-testable; binary document formats (DOCX, PDF) render in the crash-isolated Python sidecar |
 | llama.cpp as a supervised process | The core never links llama.cpp; `llama-server` runs crash-isolated on a free loopback port, is health-polled, idle-unloaded and killed on exit (spec §43, [AI.md](AI.md)) |
+| Bundled sidecar, supervised | In packaged builds the frozen Python engine ships under `Resources/sidecar/` and `engine_runtime` spawns it (unless one already answers), health-waits and kills it on exit; in dev it stays dormant and the external `pnpm engine:run` flow is used (Phase 9, [PACKAGING.md](PACKAGING.md)) |
 
 ## IPC contract
 
@@ -68,7 +70,8 @@ normalise everything into the shared contract.
 
 ## What deliberately does NOT exist yet
 
-Citations formatting (Citation.js/CSL), exports, audio pipelines, and cloud
-AI (optional add-on) — scaffolded as interfaces only. Phase status: Phases 0–4
-(foundation, document MVP, hybrid retrieval, local AI, evidence matrices) are
-implemented and verified ([PHASE_REPORTS.md](PHASE_REPORTS.md)).
+Cloud AI (optional add-on) — every AI feature runs on-device. Phase status:
+Phases 0–9 — the master build plan is complete: foundation, document MVP,
+hybrid retrieval, local AI, evidence matrices, citations & bibliography,
+academic exports, lecture transcription, text-to-speech, and platform
+installers ([PHASE_REPORTS.md](PHASE_REPORTS.md)).

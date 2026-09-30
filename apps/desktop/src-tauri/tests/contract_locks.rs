@@ -568,4 +568,199 @@ mod tests {
             "unloaded"
         );
     }
+
+    // -- Phase 7: speech-to-text (spec §20, §47.7) ----------------------------
+
+    use researchai_lib::commands::stt::{SttStatusResponse, TranscriptionJobResult};
+    use researchai_lib::db::SttSettings;
+    use researchai_lib::services::transcription::{TranscriptionResult, TranscriptionSegment};
+
+    #[test]
+    fn stt_settings_keys() {
+        let s = SttSettings {
+            whisper_cli_path: "/bin/whisper-cli".into(),
+            whisper_model_path: "/models/ggml-base.bin".into(),
+            language: "auto".into(),
+            convert_with_ffmpeg: true,
+        };
+        assert_eq!(
+            keys(&s),
+            sorted(&[
+                "whisperCliPath",
+                "whisperModelPath",
+                "language",
+                "convertWithFfmpeg",
+            ])
+        );
+    }
+
+    #[test]
+    fn stt_status_response_keys() {
+        let r = SttStatusResponse {
+            configured: true,
+            cli_found: true,
+            model_found: true,
+            ffmpeg_found: false,
+            whisper_cli_path: "/bin/whisper-cli".into(),
+            whisper_model_path: "/models/ggml-base.bin".into(),
+            language: "auto".into(),
+            convert_with_ffmpeg: true,
+        };
+        assert_eq!(
+            keys(&r),
+            sorted(&[
+                "configured",
+                "cliFound",
+                "modelFound",
+                "ffmpegFound",
+                "whisperCliPath",
+                "whisperModelPath",
+                "language",
+                "convertWithFfmpeg",
+            ])
+        );
+    }
+
+    #[test]
+    fn transcription_job_result_keys() {
+        let r = TranscriptionJobResult {
+            document_id: "d1".into(),
+            segments: 12,
+            duration_ms: 910_000,
+            language: Some("en".into()),
+            detail: String::new(),
+        };
+        assert_eq!(
+            keys(&r),
+            sorted(&[
+                "documentId",
+                "segments",
+                "durationMs",
+                "language",
+                "detail",
+            ])
+        );
+    }
+
+    #[test]
+    fn transcription_result_and_segment_keys() {
+        let seg = TranscriptionSegment {
+            start_ms: 0,
+            end_ms: 4_200,
+            text: "hello".into(),
+        };
+        assert_eq!(keys(&seg), sorted(&["startMs", "endMs", "text"]));
+
+        let r = TranscriptionResult {
+            segments: vec![seg],
+            language: Some("en".into()),
+            duration_ms: 4_200,
+        };
+        assert_eq!(
+            keys(&r),
+            sorted(&["segments", "language", "durationMs"])
+        );
+    }
+
+    // -- Phase 8: text-to-speech (spec §21, §47.7) -----------------------------
+
+    use researchai_lib::commands::tts::{NarrationResult, TtsStatusResponse};
+    use researchai_lib::db::TtsSettings;
+    use researchai_lib::services::tts::{TtsAudio, TtsStatus};
+
+    #[test]
+    fn tts_settings_keys() {
+        let s = TtsSettings {
+            provider: "piper".into(),
+            piper_path: "/opt/piper/piper".into(),
+            voice_model_path: "/voices/en_US.onnx".into(),
+            speed: 1.0,
+            macos_voice: String::new(),
+            mp3_enabled: false,
+        };
+        assert_eq!(
+            keys(&s),
+            sorted(&[
+                "provider",
+                "piperPath",
+                "voiceModelPath",
+                "speed",
+                "macosVoice",
+                "mp3Enabled",
+            ])
+        );
+    }
+
+    #[test]
+    fn tts_status_response_keys() {
+        let r = TtsStatusResponse {
+            provider: "piper".into(),
+            binary_found: true,
+            model_found: true,
+            ffmpeg_found: false,
+            ready: true,
+            output_dir: "/out".into(),
+            settings: TtsSettings::default(),
+        };
+        assert_eq!(
+            keys(&r),
+            sorted(&[
+                "provider",
+                "binaryFound",
+                "modelFound",
+                "ffmpegFound",
+                "ready",
+                "outputDir",
+                "settings",
+            ])
+        );
+    }
+
+    #[test]
+    fn narration_result_keys() {
+        let r = NarrationResult {
+            audio_path: "/out/tts-x.mp3".into(),
+            format: "mp3".into(),
+            bytes: 1234,
+            duration_ms: 65_000,
+            words: 650,
+            engine: "read_aloud".into(),
+        };
+        assert_eq!(
+            keys(&r),
+            sorted(&[
+                "audioPath",
+                "format",
+                "bytes",
+                "durationMs",
+                "words",
+                "engine",
+            ])
+        );
+    }
+
+    #[test]
+    fn tts_audio_and_status_keys() {
+        let a = TtsAudio {
+            path: "/out/tts-x.wav".into(),
+            format: "wav".into(),
+            bytes: 44_100,
+            duration_ms: 1_000,
+        };
+        assert_eq!(
+            keys(&a),
+            sorted(&["path", "format", "bytes", "durationMs"])
+        );
+
+        let st = TtsStatus {
+            binary_found: false,
+            model_found: false,
+            ready: false,
+            output_dir: "/out".into(),
+        };
+        assert_eq!(
+            keys(&st),
+            sorted(&["binaryFound", "modelFound", "ready", "outputDir"])
+        );
+    }
 }

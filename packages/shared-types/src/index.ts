@@ -75,7 +75,14 @@ export interface DocumentSummary {
 // Citations & bibliography (Phase 5, spec §31)
 // ---------------------------------------------------------------------------
 
-export type RefType = 'article' | 'book' | 'chapter' | 'report' | 'webpage' | 'thesis';
+export type RefType =
+  | 'article'
+  | 'book'
+  | 'chapter'
+  | 'report'
+  | 'webpage'
+  | 'thesis'
+  | 'transcript';
 
 export type CitationStyle = 'apa' | 'harvard' | 'chicago';
 
@@ -102,6 +109,35 @@ export interface BibliographyUpdate {
   publisher?: string | null;
   url?: string | null;
   refType?: RefType;
+}
+
+// ---------------------------------------------------------------------------
+// Academic exports (Phase 6, spec §32)
+// ---------------------------------------------------------------------------
+
+export type ExportFormat = 'markdown' | 'docx' | 'pdf' | 'bibtex' | 'ris';
+
+export type ExportKind = 'analysis' | 'evidence_table' | 'bibliography';
+
+/** Result of a completed export. */
+export interface ExportResult {
+  readonly path: string;
+  readonly bytes: number;
+  readonly kind: ExportKind;
+  readonly format: ExportFormat;
+}
+
+/** Kind → allowed formats, from the backend's capability map. */
+export interface ExportKindCapability {
+  readonly kind: ExportKind | string;
+  readonly formats: readonly ExportFormat[] | readonly string[];
+}
+
+/** A file in the managed exports/ directory. */
+export interface ExportFile {
+  readonly name: string;
+  readonly path: string;
+  readonly sizeBytes: number;
 }
 
 /** Result of an import batch (per-file errors are isolated, spec §42). */
@@ -414,4 +450,101 @@ export interface EvidenceSummary {
   readonly createdAt: string;
   readonly hasAi: boolean;
   readonly modelId: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Speech-to-text (Phase 7, spec §20, §47.7)
+// ---------------------------------------------------------------------------
+
+/** Speech-to-text settings: local whisper.cpp only, user-provided binaries. */
+export interface SttSettings {
+  readonly whisperCliPath: string;
+  readonly whisperModelPath: string;
+  /** "auto" or an ISO code ("en", "de", …). */
+  readonly language: string;
+  /** Convert non-16kHz-mono inputs via ffmpeg when available. */
+  readonly convertWithFfmpeg: boolean;
+}
+
+/** One-shot availability probe for the Audio tab and Settings → Speech. */
+export interface SttStatus {
+  /** True when both paths are configured (may still be missing on disk). */
+  readonly configured: boolean;
+  readonly cliFound: boolean;
+  readonly modelFound: boolean;
+  readonly ffmpegFound: boolean;
+  readonly whisperCliPath: string;
+  readonly whisperModelPath: string;
+  readonly language: string;
+  readonly convertWithFfmpeg: boolean;
+}
+
+/** One timestamped utterance (milliseconds from stream start). */
+export interface TranscriptionSegment {
+  readonly startMs: number;
+  readonly endMs: number;
+  readonly text: string;
+}
+
+/** Result of one transcription job; the transcript also lands in the library. */
+export interface TranscriptionJobResult {
+  readonly documentId: string;
+  readonly segments: number;
+  readonly durationMs: number;
+  readonly language: string | null;
+  /** Extra note for the toast (e.g. embeddings deferred). */
+  readonly detail: string;
+}
+
+// ---------------------------------------------------------------------------
+// Text-to-speech (Phase 8, spec §21, §47.7)
+// ---------------------------------------------------------------------------
+
+/** TTS settings: local Piper (default) or the macOS `say` voice. */
+export interface TtsSettings {
+  /** "piper" | "macos-say". */
+  readonly provider: string;
+  readonly piperPath: string;
+  /** Piper voice model (.onnx); its .json sits beside it. */
+  readonly voiceModelPath: string;
+  /** Speech rate multiplier (0.5–2.0; 1.0 = normal). */
+  readonly speed: number;
+  /** macOS voice name for the say provider (empty = system default). */
+  readonly macosVoice: string;
+  /** Transcode WAV → MP3 via ffmpeg when available. */
+  readonly mp3Enabled: boolean;
+}
+
+/** One-shot availability probe for the Audio tab and Settings → Speech. */
+export interface TtsStatus {
+  /** Selected provider id ("piper" | "macos-say"). */
+  readonly provider: string;
+  readonly binaryFound: boolean;
+  readonly modelFound: boolean;
+  readonly ffmpegFound: boolean;
+  readonly ready: boolean;
+  readonly outputDir: string;
+  readonly settings: TtsSettings;
+}
+
+/** Narration kinds for tts_narrate. */
+export type NarrationKind =
+  | 'read_aloud'
+  | 'summary_5'
+  | 'summary_10'
+  | 'summary_20'
+  | 'podcast';
+
+/** Result of one narration job (read-aloud, summary or podcast). */
+export interface NarrationResult {
+  /** Absolute path of the rendered audio file. */
+  readonly audioPath: string;
+  /** "wav" or "mp3". */
+  readonly format: string;
+  readonly bytes: number;
+  readonly durationMs: number;
+  /** Words in the spoken script. */
+  readonly words: number;
+  /** Engine that generated the script ("read_aloud" | "llama.cpp" | …). */
+  readonly engine: string;
 }

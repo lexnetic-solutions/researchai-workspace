@@ -1003,3 +1003,48 @@ code { font-family: var(--font-mono); font-size: 0.92em; background: var(--bg-in
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- First-run setup checklist (Phase 9) ---------- */
+
+.setup-checklist {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+}
+
+.setup-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.setup-check .status-dot { margin-top: 6px; }
+
+.setup-check-body { flex: 1; min-width: 0; }
+
+/* ---------- Speech-to-text (Phase 7) ---------- */
+
+.stt-status { align-items: center; }
+
+.audio-path {
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcript-preview {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.85rem;
+  line-height: 1.55;
+}

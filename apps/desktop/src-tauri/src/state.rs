@@ -8,6 +8,7 @@ use tauri::Manager;
 
 use crate::db;
 use crate::error::{AppError, AppResult};
+use crate::services::engine_runtime::EngineRuntime;
 use crate::services::llm_runtime::LlmRuntime;
 use crate::services::queue::IngestionQueue;
 use crate::services::settings::Settings;
@@ -20,12 +21,25 @@ pub struct AppState {
     pub _queue: IngestionQueue,
     /// Owns the llama-server supervisor; kills the child on app exit.
     pub llm_runtime: LlmRuntime,
+    /// Owns the bundled document-engine sidecar (Phase 9); dormant in dev,
+    /// where the engine is started externally. Kills the child on exit.
+    pub engine_runtime: EngineRuntime,
 }
 
 impl AppState {
     /// Open (creating if needed) the database, load settings and start the
     /// background ingestion worker (spec §14).
     pub fn initialize(data_dir: PathBuf) -> AppResult<Self> {
+        Self::initialize_with_resources(data_dir, None)
+    }
+
+    /// Full initializer: `resource_dir` is the bundled app resources
+    /// (`.app/Contents/Resources`) when running packaged, `None` in dev
+    /// (sidecar supervisor then stays dormant unless an engine answers).
+    pub fn initialize_with_resources(
+        data_dir: PathBuf,
+        resource_dir: Option<PathBuf>,
+    ) -> AppResult<Self> {
         std::fs::create_dir_all(&data_dir)?;
         let db = db::Db::open(&data_dir)?;
         let settings = db.load_settings()?;
@@ -33,12 +47,19 @@ impl AppState {
         // Sweep leftover llama-server processes from previous runs, then
         // start the supervisor thread (spec §43).
         let llm_runtime = LlmRuntime::start(&data_dir, &data_dir.join("models"));
+        // Spawn the bundled document-engine sidecar when present (Phase 9);
+        // dormant no-op in dev.
+        let engine_runtime = EngineRuntime::start(
+            resource_dir.unwrap_or_else(|| data_dir.clone()),
+            data_dir.join("models"),
+        );
         Ok(Self {
             data_dir,
             db,
             settings: Mutex::new(settings),
             _queue: queue,
             llm_runtime,
+            engine_runtime,
         })
     }
 }

@@ -5,6 +5,10 @@ import type {
   LocalModel,
   ModelDownloadEvent,
   RuntimeStatus,
+  SttSettings,
+  SttStatus,
+  TtsSettings,
+  TtsStatus,
 } from '@researchai/shared-types';
 import { backend, onModelDownload } from '../backend/client';
 import { useStore, applyTheme } from '../state/store';
@@ -497,6 +501,312 @@ export function SettingsView() {
       </div>
 
       <LocalAiSection />
+      <SpeechSection />
     </section>
+  );
+}
+
+/** Speech-to-text section (Phase 7): local whisper.cpp configuration. */
+function SpeechSection() {
+  const { pushToast, native } = useStore();
+  const [stt, setStt] = useState<SttSettings | null>(null);
+  const [status, setStatus] = useState<SttStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [tts, setTts] = useState<TtsSettings | null>(null);
+  const [ttsStatus, setTtsStatus] = useState<TtsStatus | null>(null);
+  const [ttsBusy, setTtsBusy] = useState(false);
+
+  const reload = useCallback(async () => {
+    try {
+      const [s, st] = await Promise.all([backend.sttGetSettings(), backend.sttCheck()]);
+      setStt(s);
+      setStatus(st);
+    } catch (err) {
+      pushToast('error', err instanceof Error ? err.message : String(err));
+    }
+    try {
+      const [t, tst] = await Promise.all([backend.ttsGetSettings(), backend.ttsCheck()]);
+      setTts(t);
+      setTtsStatus(tst);
+    } catch (err) {
+      pushToast('error', err instanceof Error ? err.message : String(err));
+    }
+  }, [pushToast]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  async function save(next: SttSettings) {
+    setBusy(true);
+    try {
+      setStt(await backend.sttSaveSettings(next));
+      setStatus(await backend.sttCheck());
+      pushToast('success', 'Speech settings saved.');
+    } catch (err) {
+      pushToast('error', err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function pickPath(field: 'whisperCliPath' | 'whisperModelPath', kind: string) {
+    if (native) {
+      const picked = await backend.aiPickModelFile();
+      if (picked && stt) void save({ ...stt, [field]: picked });
+      return;
+    }
+    const picked = window.prompt(
+      `Browser preview: type the ${kind} path (cancel to abort).`,
+      field === 'whisperCliPath'
+        ? '/opt/whisper.cpp/build/bin/whisper-cli'
+        : '/opt/whisper.cpp/models/ggml-base.bin',
+    );
+    if (picked && stt) void save({ ...stt, [field]: picked });
+  }
+
+  async function pickTtsPath(field: 'piperPath' | 'voiceModelPath', kind: string) {
+    if (native) {
+      const picked = await backend.aiPickModelFile();
+      if (picked && tts) void saveTts({ ...tts, [field]: picked });
+      return;
+    }
+    const picked = window.prompt(
+      `Browser preview: type the ${kind} path (cancel to abort).`,
+      field === 'piperPath'
+        ? '/opt/homebrew/bin/piper'
+        : '/opt/piper/voices/en_US-amy-medium.onnx',
+    );
+    if (picked && tts) void saveTts({ ...tts, [field]: picked });
+  }
+
+  async function saveTts(next: TtsSettings) {
+    setTtsBusy(true);
+    try {
+      const saved = await backend.ttsSaveSettings(next);
+      setTts(saved);
+      setTtsStatus(await backend.ttsCheck());
+      pushToast('success', 'Voice settings saved.');
+    } catch (err) {
+      pushToast('error', err instanceof Error ? err.message : String(err));
+    } finally {
+      setTtsBusy(false);
+    }
+  }
+
+  if (!stt) return null;
+
+  return (
+    <div className="card">
+      <h2>Speech</h2>
+      {/* stt + tts settings render below; tts section is guarded on tts load */}
+      <p className="tiny muted">
+        Lecture transcription runs through your local whisper.cpp build — the app never
+        bundles or downloads models. Point it at a <code>whisper-cli</code> binary and a GGML
+        model (e.g. <code>ggml-base.bin</code>); larger models are more accurate but slower.
+      </p>
+
+      {status && (
+        <div className="field-row" style={{ marginTop: '0.5rem' }}>
+          <span className={`chip ${status.cliFound ? 'pass' : 'fail'}`}>
+            whisper-cli {status.cliFound ? 'found' : 'missing'}
+          </span>
+          <span className={`chip ${status.modelFound ? 'pass' : 'fail'}`}>
+            model {status.modelFound ? 'found' : 'missing'}
+          </span>
+          <span className={`chip ${status.ffmpegFound ? 'pass' : 'subtle'}`}>
+            ffmpeg {status.ffmpegFound ? 'on PATH' : 'not on PATH'}
+          </span>
+          {!native && <span className="tiny muted">(preview: paths are mocked)</span>}
+        </div>
+      )}
+
+      <div className="field-row" style={{ marginTop: '0.75rem' }}>
+        <input
+          className="search-input"
+          value={stt.whisperCliPath}
+          placeholder="/path/to/whisper-cli"
+          aria-label="whisper-cli binary path"
+          onChange={(e) => setStt({ ...stt, whisperCliPath: e.target.value })}
+        />
+        <button
+          type="button"
+          className="btn ghost tiny-btn"
+          onClick={() => void pickPath('whisperCliPath', 'whisper-cli binary')}
+        >
+          Browse…
+        </button>
+      </div>
+      <div className="field-row" style={{ marginTop: '0.5rem' }}>
+        <input
+          className="search-input"
+          value={stt.whisperModelPath}
+          placeholder="/path/to/ggml-base.bin"
+          aria-label="whisper GGML model path"
+          onChange={(e) => setStt({ ...stt, whisperModelPath: e.target.value })}
+        />
+        <button
+          type="button"
+          className="btn ghost tiny-btn"
+          onClick={() => void pickPath('whisperModelPath', 'GGML model')}
+        >
+          Browse…
+        </button>
+      </div>
+
+      <div className="field-row" style={{ marginTop: '0.5rem' }}>
+        <select
+          className="search-scope"
+          value={stt.language}
+          aria-label="Transcription language"
+          onChange={(e) => setStt({ ...stt, language: e.target.value })}
+        >
+          <option value="auto">Detect language</option>
+          <option value="en">English</option>
+          <option value="de">German</option>
+          <option value="fr">French</option>
+          <option value="es">Spanish</option>
+          <option value="zh">Chinese</option>
+        </select>
+        <label className="model-row tiny">
+          <input
+            type="checkbox"
+            checked={stt.convertWithFfmpeg}
+            onChange={(e) => setStt({ ...stt, convertWithFfmpeg: e.target.checked })}
+          />
+          Convert non-WAV input with ffmpeg
+        </label>
+      </div>
+
+      <div className="field-row" style={{ marginTop: '0.75rem' }}>
+        <button
+          type="button"
+          className="btn primary tiny-btn"
+          disabled={busy}
+          onClick={() => void save(stt)}
+        >
+          {busy ? 'Saving…' : 'Save speech settings'}
+        </button>
+      </div>
+      <p className="tiny muted" style={{ marginTop: '0.5rem' }}>
+        16 kHz mono WAV transcribes directly; anything else converts via ffmpeg first (install
+        with <code>brew install ffmpeg</code> if needed).
+      </p>
+
+      <h3 className="evidence-title" style={{ marginTop: '1rem' }}>
+        Voice output (text-to-speech)
+      </h3>
+      {tts && ttsStatus && (
+        <>
+          <div className="field-row" style={{ marginTop: '0.5rem' }}>
+            <select
+              className="search-scope"
+              value={tts.provider}
+              aria-label="Voice provider"
+              onChange={(e) => setTts({ ...tts, provider: e.target.value })}
+            >
+              <option value="piper">Piper (recommended, local neural voices)</option>
+              <option value="macos-say">macOS say (built-in voice)</option>
+            </select>
+            <span
+              className={`chip ${ttsStatus.ready ? 'pass' : 'fail'}`}
+              title={
+                ttsStatus.provider === 'macos-say'
+                  ? 'Uses the built-in macOS speech service'
+                  : 'Needs the piper binary and a voice model below'
+              }
+            >
+              {ttsStatus.ready ? 'ready' : 'not ready'}
+            </span>
+          </div>
+
+          {tts.provider === 'piper' ? (
+            <>
+              <div className="field-row" style={{ marginTop: '0.5rem' }}>
+                <input
+                  className="search-input"
+                  value={tts.piperPath}
+                  placeholder="/path/to/piper"
+                  aria-label="piper binary path"
+                  onChange={(e) => setTts({ ...tts, piperPath: e.target.value })}
+                />
+                <button
+                  type="button"
+                  className="btn ghost tiny-btn"
+                  onClick={() => void pickTtsPath('piperPath', 'piper binary')}
+                >
+                  Browse…
+                </button>
+              </div>
+              <div className="field-row" style={{ marginTop: '0.5rem' }}>
+                <input
+                  className="search-input"
+                  value={tts.voiceModelPath}
+                  placeholder="/path/to/en_US-amy-medium.onnx"
+                  aria-label="Piper voice model path"
+                  onChange={(e) => setTts({ ...tts, voiceModelPath: e.target.value })}
+                />
+                <button
+                  type="button"
+                  className="btn ghost tiny-btn"
+                  onClick={() => void pickTtsPath('voiceModelPath', 'Piper voice model')}
+                >
+                  Browse…
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="field-row" style={{ marginTop: '0.5rem' }}>
+              <input
+                className="search-input"
+                value={tts.macosVoice}
+                placeholder="Voice name (empty = system default, e.g. Samantha)"
+                aria-label="macOS voice name"
+                onChange={(e) => setTts({ ...tts, macosVoice: e.target.value })}
+              />
+            </div>
+          )}
+
+          <div className="field-row" style={{ marginTop: '0.5rem' }}>
+            <label className="model-row tiny">
+              Speed
+              <input
+                type="range"
+                min={0.5}
+                max={2}
+                step={0.05}
+                value={tts.speed}
+                onChange={(e) => setTts({ ...tts, speed: Number(e.target.value) })}
+              />
+              {tts.speed.toFixed(2)}×
+            </label>
+            <label className="model-row tiny">
+              <input
+                type="checkbox"
+                checked={tts.mp3Enabled}
+                onChange={(e) => setTts({ ...tts, mp3Enabled: e.target.checked })}
+              />
+              Export MP3 via ffmpeg
+            </label>
+          </div>
+
+          <div className="field-row" style={{ marginTop: '0.75rem' }}>
+            <button
+              type="button"
+              className="btn primary tiny-btn"
+              disabled={ttsBusy}
+              onClick={() => void saveTts(tts)}
+            >
+              {ttsBusy ? 'Saving…' : 'Save voice settings'}
+            </button>
+          </div>
+          <p className="tiny muted" style={{ marginTop: '0.5rem' }}>
+            Piper voices are small .onnx files from the Piper samples page (install with{' '}
+            <code>brew install piper</code>). Read-aloud works without AI; summaries and podcast
+            narration use the local model.
+          </p>
+        </>
+      )}
+    </div>
   );
 }

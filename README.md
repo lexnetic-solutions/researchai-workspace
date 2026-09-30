@@ -5,15 +5,21 @@ researchers. Import your papers, read them, question them with traceable
 citations, compare authors, and export academic artefacts — all on your own
 machine.
 
-> **Status: Phase 5 — Citations & bibliography.** The app launches, manages
-> projects, imports documents (managed copy + checksum dedup), parses
-> PDF/DOCX/TXT/MD/HTML through the local Python engine, answers searches with
-> **hybrid retrieval** (FTS5 keyword + fastembed/sqlite-vec vectors, debug
-> panel), asks questions with **grounded local AI** (GGUF models via llama.cpp,
-> citation-only answers), builds **cross-document evidence matrices**, and now
-> formats **citations & bibliographies** (APA 7 · Harvard · Chicago) from
-> user-correctable metadata — deterministic, never AI-invented. Remaining
-> phases (exports, audio) are next.
+> **Status: Phase 9 — Platform installers (final phase).** The app launches, manages projects,
+> imports documents (managed copy + checksum dedup), parses PDF/DOCX/TXT/MD/HTML
+> through the bundled local Python engine, answers searches with **hybrid retrieval**
+> (FTS5 keyword + fastembed/sqlite-vec vectors, debug panel), asks questions
+> with **grounded local AI** (GGUF models via llama.cpp, citation-only
+> answers), builds **cross-document evidence matrices**, formats **citations
+> & bibliographies** (APA 7 · Harvard · Chicago), exports everything —
+> analyses, matrices, bibliographies — as **Markdown, DOCX, PDF, BibTeX and
+> RIS** into the managed workspace, **transcribes lecture recordings**
+> with local whisper.cpp into timestamped, searchable transcripts, and
+> **speaks documents aloud** — read-aloud, 5/10/20-minute spoken summaries
+> and two-host podcast segments — via local Piper (or the macOS voice).
+> Release CI builds the frozen sidecar + signed-when-configured installers
+> (macOS DMG, Windows NSIS) and the first-run **Setup checklist** verifies
+> every subsystem live.
 
 ## Repository layout
 

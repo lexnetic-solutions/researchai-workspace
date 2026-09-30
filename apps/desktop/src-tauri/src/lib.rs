@@ -27,7 +27,10 @@ pub fn run() {
             logging::init(&data_dir)?;
             log::info!(target: "researchai", "starting; data dir = {}", data_dir.display());
 
-            let app_state = state::AppState::initialize(data_dir)?;
+            // Bundled resources only exist in a packaged app; in dev the
+            // path resolver still works but holds no sidecar.
+            let resource_dir = handle.path().resource_dir().ok();
+            let app_state = state::AppState::initialize_with_resources(data_dir, resource_dir)?;
             app.manage(app_state);
             Ok(())
         })
@@ -62,6 +65,20 @@ pub fn run() {
             commands::evidence::evidence_delete,
             commands::citations::update_document_bibliography,
             commands::citations::bibliography_list,
+            commands::exports::export_capabilities,
+            commands::exports::export_document,
+            commands::exports::export_bibliography,
+            commands::exports::reveal_path,
+            commands::exports::list_exports,
+            commands::stt::stt_check,
+            commands::stt::stt_get_settings,
+            commands::stt::stt_save_settings,
+            commands::stt::stt_transcribe,
+            commands::tts::tts_check,
+            commands::tts::tts_get_settings,
+            commands::tts::tts_save_settings,
+            commands::tts::tts_speak_document,
+            commands::tts::tts_narrate,
             commands::system::get_settings,
             commands::system::set_theme,
             commands::system::set_ai_enabled,

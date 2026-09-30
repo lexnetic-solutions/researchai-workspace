@@ -823,6 +823,53 @@ impl Db {
         Ok(())
     }
 
+    /// Speech-to-text settings (Phase 7): whisper.cpp binary/model paths and
+    /// transcription preferences, stored under `stt.*` keys.
+    pub fn get_stt_settings(&self) -> AppResult<SttSettings> {
+        let conn = self.lock();
+        let map: std::collections::HashMap<String, String> = {
+            let mut stmt = conn
+                .prepare("SELECT key, value FROM settings_kv WHERE key LIKE 'stt.%'")?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows.into_iter().collect()
+        };
+        Ok(SttSettings::from_map(&map))
+    }
+
+    pub fn save_stt_settings(&self, s: &SttSettings) -> AppResult<()> {
+        for (k, v) in s.to_map() {
+            self.save_setting(k, &v)?;
+        }
+        Ok(())
+    }
+
+    /// Text-to-speech settings (Phase 8), stored under `tts.*` keys.
+    pub fn get_tts_settings(&self) -> AppResult<TtsSettings> {
+        let conn = self.lock();
+        let map: std::collections::HashMap<String, String> = {
+            let mut stmt = conn
+                .prepare("SELECT key, value FROM settings_kv WHERE key LIKE 'tts.%'")?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows.into_iter().collect()
+        };
+        Ok(TtsSettings::from_map(&map))
+    }
+
+    pub fn save_tts_settings(&self, s: &TtsSettings) -> AppResult<()> {
+        for (k, v) in s.to_map() {
+            self.save_setting(k, &v)?;
+        }
+        Ok(())
+    }
+
     // -- evidence tables (Phase 4, spec §18) ----------------------------------
 
     pub fn insert_evidence_table(&self, t: &EvidenceTableRow) -> AppResult<()> {
@@ -1119,6 +1166,118 @@ impl AiSettings {
     }
 }
 
+/// Speech-to-text settings (Phase 7, spec §20): local whisper.cpp only.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SttSettings {
+    /// Path to the whisper.cpp `whisper-cli` (or `main`) binary.
+    pub whisper_cli_path: String,
+    /// Path to a whisper.cpp GGML model file (e.g. ggml-base.bin).
+    pub whisper_model_path: String,
+    /// Language hint ("auto" or an ISO code like "en", "de").
+    pub language: String,
+    /// Convert non-WAV inputs via ffmpeg when present (honest error if not).
+    pub convert_with_ffmpeg: bool,
+}
+
+impl Default for SttSettings {
+    fn default() -> Self {
+        Self {
+            whisper_cli_path: String::new(),
+            whisper_model_path: String::new(),
+            language: "auto".into(),
+            convert_with_ffmpeg: true,
+        }
+    }
+}
+
+impl SttSettings {
+    fn from_map(map: &std::collections::HashMap<String, String>) -> Self {
+        let get = |k: &str| map.get(&format!("stt.{k}")).cloned();
+        let d = Self::default();
+        Self {
+            whisper_cli_path: get("whisper_cli_path").unwrap_or_default(),
+            whisper_model_path: get("whisper_model_path").unwrap_or_default(),
+            language: get("language").filter(|s| !s.is_empty()).unwrap_or(d.language),
+            convert_with_ffmpeg: get("convert_with_ffmpeg").map(|v| v == "true").unwrap_or(d.convert_with_ffmpeg),
+        }
+    }
+
+    fn to_map(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("stt.whisper_cli_path", self.whisper_cli_path.clone()),
+            ("stt.whisper_model_path", self.whisper_model_path.clone()),
+            ("stt.language", self.language.clone()),
+            (
+                "stt.convert_with_ffmpeg",
+                self.convert_with_ffmpeg.to_string(),
+            ),
+        ]
+    }
+}
+
+/// Text-to-speech settings (Phase 8, spec §21): local Piper or the macOS
+/// built-in `say` voice. User-provided binaries/models only.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TtsSettings {
+    /// "piper" (spec default) or "macos-say" (convenience fallback).
+    pub provider: String,
+    /// Path to the `piper` executable.
+    pub piper_path: String,
+    /// Path to a Piper voice model (`.onnx`; its `.json` must sit beside it).
+    pub voice_model_path: String,
+    /// Speech rate multiplier (0.5–2.0; 1.0 = normal).
+    pub speed: f32,
+    /// macOS voice name for the `say` provider (empty = system default).
+    pub macos_voice: String,
+    /// Transcode WAV output to MP3 via ffmpeg when available.
+    pub mp3_enabled: bool,
+}
+
+impl Default for TtsSettings {
+    fn default() -> Self {
+        Self {
+            provider: "piper".into(),
+            piper_path: String::new(),
+            voice_model_path: String::new(),
+            speed: 1.0,
+            macos_voice: String::new(),
+            mp3_enabled: false,
+        }
+    }
+}
+
+impl TtsSettings {
+    fn from_map(map: &std::collections::HashMap<String, String>) -> Self {
+        let get = |k: &str| map.get(&format!("tts.{k}")).cloned();
+        let get_f32 = |k: &str| get(k).and_then(|v| v.parse().ok());
+        let d = Self::default();
+        Self {
+            provider: match get("provider").as_deref() {
+                Some("macos-say") => "macos-say".into(),
+                _ => d.provider,
+            },
+            piper_path: get("piper_path").unwrap_or_default(),
+            voice_model_path: get("voice_model_path").unwrap_or_default(),
+            speed: get_f32("speed").map(|s: f32| s.clamp(0.5, 2.0)).unwrap_or(d.speed),
+            macos_voice: get("macos_voice").unwrap_or_default(),
+            mp3_enabled: get("mp3_enabled").map(|v| v == "true").unwrap_or(d.mp3_enabled),
+        }
+    }
+
+    fn to_map(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("tts.provider", self.provider.clone()),
+            ("tts.piper_path", self.piper_path.clone()),
+            ("tts.voice_model_path", self.voice_model_path.clone()),
+            ("tts.speed", self.speed.to_string()),
+            ("tts.macos_voice", self.macos_voice.clone()),
+            ("tts.mp3_enabled", self.mp3_enabled.to_string()),
+        ]
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -1319,6 +1478,62 @@ pub(crate) mod tests {
         assert!(db
             .update_document_bibliography("missing", &Default::default())
             .is_err());
+    }
+
+    #[test]
+    fn stt_settings_roundtrip() {
+        let (_dir, db) = temp_db();
+        let d = db.get_stt_settings().unwrap();
+        assert_eq!(d.language, "auto");
+        assert!(d.convert_with_ffmpeg); // ffmpeg on by default
+
+        let s = SttSettings {
+            whisper_cli_path: "/opt/whisper.cpp/build/bin/whisper-cli".into(),
+            whisper_model_path: "/models/ggml-base.bin".into(),
+            language: "en".into(),
+            convert_with_ffmpeg: false,
+        };
+        db.save_stt_settings(&s).unwrap();
+        let loaded = db.get_stt_settings().unwrap();
+        assert_eq!(loaded.whisper_cli_path, s.whisper_cli_path);
+        assert_eq!(loaded.whisper_model_path, s.whisper_model_path);
+        assert_eq!(loaded.language, "en");
+        assert!(!loaded.convert_with_ffmpeg);
+
+        // Back to defaults overwrites all keys (no stale "auto" language).
+        db.save_stt_settings(&SttSettings::default()).unwrap();
+        let d2 = db.get_stt_settings().unwrap();
+        assert_eq!(d2.language, "auto");
+        assert!(d2.convert_with_ffmpeg);
+    }
+
+    #[test]
+    fn tts_settings_roundtrip() {
+        let (_dir, db) = temp_db();
+        let d = db.get_tts_settings().unwrap();
+        assert_eq!(d.provider, "piper");
+        assert_eq!(d.speed, 1.0);
+        assert!(!d.mp3_enabled);
+
+        let s = TtsSettings {
+            provider: "macos-say".into(),
+            piper_path: "/opt/piper/piper".into(),
+            voice_model_path: "/voices/en_US-amy-medium.onnx".into(),
+            speed: 1.25,
+            macos_voice: "Samantha".into(),
+            mp3_enabled: true,
+        };
+        db.save_tts_settings(&s).unwrap();
+        let loaded = db.get_tts_settings().unwrap();
+        assert_eq!(loaded.provider, "macos-say");
+        assert_eq!(loaded.voice_model_path, s.voice_model_path);
+        assert_eq!(loaded.speed, 1.25);
+        assert_eq!(loaded.macos_voice, "Samantha");
+        assert!(loaded.mp3_enabled);
+
+        // Unknown provider strings fall back to piper (forward compatible).
+        db.save_setting("tts.provider", "skynet-voice").unwrap();
+        assert_eq!(db.get_tts_settings().unwrap().provider, "piper");
     }
 
     #[test]

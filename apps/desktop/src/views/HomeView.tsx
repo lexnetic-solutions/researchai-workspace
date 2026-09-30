@@ -1,8 +1,125 @@
+import { useCallback, useEffect, useState } from 'react';
+import type { SttStatus, TtsStatus } from '@researchai/shared-types';
+import { backend } from '../backend/client';
 import { useStore } from '../state/store';
 import { EmptyState } from '../components/EmptyState';
 
+type CheckState = 'pending' | 'ok' | 'attention';
+
+interface SetupCheck {
+  readonly id: string;
+  readonly label: string;
+  readonly state: CheckState;
+  readonly detail: string;
+  readonly view?: 'library' | 'research' | 'audio' | 'settings';
+}
+
+/** First-run setup checklist (Phase 9, spec §48): live feature probes. */
+function useSetupChecks(): SetupCheck[] {
+  const { native } = useStore();
+  const [engineUp, setEngineUp] = useState<boolean | null>(null);
+  const [aiEnabled, setAiEnabled] = useState<boolean | null>(null);
+  const [modelReady, setModelReady] = useState<boolean | null>(null);
+  const [stt, setStt] = useState<SttStatus | null>(null);
+  const [tts, setTts] = useState<TtsStatus | null>(null);
+
+  const reload = useCallback(async () => {
+    try {
+      setEngineUp(await backend.probeDocumentEngine());
+    } catch {
+      setEngineUp(false);
+    }
+    try {
+      const settings = await backend.getSettings();
+      setAiEnabled(settings.aiEnabled);
+      if (settings.aiEnabled) {
+        try {
+          const rt = await backend.aiRuntimeStatus();
+          setModelReady(rt.state.state === 'ready');
+        } catch {
+          setModelReady(false);
+        }
+      }
+    } catch {
+      setAiEnabled(null);
+    }
+    try {
+      setStt(await backend.sttCheck());
+    } catch {
+      setStt(null);
+    }
+    try {
+      setTts(await backend.ttsCheck());
+    } catch {
+      setTts(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return [
+    {
+      id: 'engine',
+      label: 'Document engine (parsing, OCR, embeddings)',
+      state: engineUp === null ? 'pending' : engineUp ? 'ok' : 'attention',
+      detail:
+        engineUp == null
+          ? 'Checking…'
+          : engineUp
+            ? 'Online — imports will parse and index.'
+            : native
+              ? 'Offline — the bundled sidecar starts automatically; retry from Diagnostics if imports fail.'
+              : 'Offline in browser preview (expected).',
+      view: 'settings',
+    },
+    {
+      id: 'ai',
+      label: 'Local AI (Ask, evidence, narration scripts)',
+      state: aiEnabled === null ? 'pending' : !aiEnabled ? 'attention' : modelReady ? 'ok' : 'attention',
+      detail:
+        aiEnabled == null
+          ? 'Checking…'
+          : !aiEnabled
+            ? 'No-AI mode is on — the app works without it; enable AI for Ask & summaries.'
+            : modelReady
+              ? 'Model loaded and ready.'
+              : 'Add a GGUF model in Settings → Local AI and load it.',
+      view: 'settings',
+    },
+    {
+      id: 'speech-in',
+      label: 'Lecture transcription (whisper.cpp)',
+      state: stt === null ? 'pending' : stt.configured ? (stt.cliFound && stt.modelFound ? 'ok' : 'attention') : 'attention',
+      detail:
+        stt == null
+          ? 'Checking…'
+          : stt.configured
+            ? stt.cliFound && stt.modelFound
+              ? 'whisper-cli and model found — ready to transcribe.'
+              : 'Paths set but files missing on disk — re-check in Settings → Speech.'
+            : 'Point ResearchAI at whisper-cli + a GGML model in Settings → Speech.',
+      view: 'audio',
+    },
+    {
+      id: 'speech-out',
+      label: 'Voice output (Piper / macOS say)',
+      state: tts === null ? 'pending' : tts.ready ? 'ok' : 'attention',
+      detail:
+        tts == null
+          ? 'Checking…'
+          : tts.ready
+            ? `Voice ready (${tts.provider === 'macos-say' ? 'macOS say' : 'Piper'}).`
+            : 'Install piper and pick a voice model in Settings → Speech (or use the macOS voice).',
+      view: 'settings',
+    },
+  ];
+}
+
 export function HomeView() {
   const { projects, activeProject, setActiveProjectId, setView, native } = useStore();
+  const checks = useSetupChecks();
 
   return (
     <section className="view">
@@ -72,10 +189,6 @@ export function HomeView() {
               <span className="status-dot ok" /> Local storage ready
             </li>
             <li>
-              <span className="status-dot unknown" /> Document engine appears online after first
-              launch of the sidecar
-            </li>
-            <li>
               <span className="status-dot ok" /> No cloud services configured
             </li>
           </ul>
@@ -86,25 +199,23 @@ export function HomeView() {
       </div>
 
       <div className="card wide">
-        <h2>Planned in later phases</h2>
-        <div className="phase-grid">
-          {[
-            ['Phase 1', 'Document import & parsing'],
-            ['Phase 2', 'Hybrid semantic search'],
-            ['Phase 3', 'Local AI (llama.cpp)'],
-            ['Phase 4', 'Cross-document comparison'],
-            ['Phase 5', 'Citations & bibliography'],
-            ['Phase 6', 'Academic exports'],
-            ['Phase 7', 'Lecture transcription'],
-            ['Phase 8', 'Audio summaries & podcast'],
-            ['Phase 9', 'Platform installers'],
-          ].map(([phase, label]) => (
-            <div key={phase} className="phase-cell">
-              <span className="phase-tag">{phase}</span>
-              <span>{label}</span>
-            </div>
+        <h2>Setup checklist</h2>
+        <ul className="setup-checklist">
+          {checks.map((c) => (
+            <li key={c.id} className="setup-check">
+              <span className={`status-dot ${c.state === 'ok' ? 'ok' : c.state === 'attention' ? 'warn' : 'unknown'}`} />
+              <div className="setup-check-body">
+                <div>{c.label}</div>
+                <div className="tiny muted">{c.detail}</div>
+              </div>
+              {c.view && c.state === 'attention' && (
+                <button type="button" className="btn ghost tiny-btn" onClick={() => setView(c.view!)}>
+                  Fix
+                </button>
+              )}
+            </li>
           ))}
-        </div>
+        </ul>
       </div>
 
       {projects.length === 0 && (

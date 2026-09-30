@@ -439,3 +439,290 @@ fields and verified healthy (fastembed, 384-dim).
 Phase 6 per spec: academic exports — summaries and evidence matrices to
 Markdown/DOCX/PDF, bibliography export (.bib/.ris/.csly), behind the
 `ExportProvider` interface.
+
+---
+
+## Phase 6 — Academic exports (complete)
+
+### Scope shipped
+
+**Rust core** —
+[exports.rs](../apps/desktop/src-tauri/src/services/exports.rs)
+
+- `ExportProvider` trait (spec §47.7) over a neutral `ExportDoc` model
+  (paragraph / bullet / heading / table blocks).
+- **Markdown, BibTeX, RIS render natively** — deterministic, byte-testable:
+  pipe tables, `@article{key, …}` entries with escaped braces and stable
+  `surnameYEARword` citation keys, spec-shaped RIS records (TY/AU/TI/JO/…/ER).
+- DOCX/PDF delegate to the engine (crash-isolated heavy rendering); the
+  engine-offline error is actionable (`pnpm engine:run`).
+- Three export kinds — analysis (answer + numbered cited passages), evidence
+  matrix (table + findings + synthesis), bibliography (formatted list or
+  reference-database .bib/.ris) — written to the managed `exports/` directory
+  with unique stamped filenames; invalid kind/format combinations are
+  rejected up front.
+- Migration-free: exports reuse analyses/evidence_tables/bibliography data.
+
+**Engine** —
+[exports.py](../services/document-engine/src/researchai_document_engine/exports.py)
+
+- `POST /export/docx` (python-docx: heading, styled tables, bullet lists)
+  and `POST /export/pdf` (reportlab, BSD-3-Clause, added to THIRD_PARTY
+  licenses): flowing bullets, gridded tables, escaping. Validation errors
+  surface as HTTP 400, never 500.
+
+**IPC + frontend** —
+[ExportsView.tsx](../apps/desktop/src/views/ExportsView.tsx)
+
+- Five commands (`export_capabilities`, `export_document`,
+  `export_bibliography`, `reveal_path`, `list_exports`); ExportsView is now
+  functional: kind → format pickers driven by the capability map, source
+  pickers listing recent analyses/tables, style selector, exported-file
+  list with sizes, reveal via the opener plugin.
+- Nav entry unlocked; preview mocks for the whole surface.
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| Rust lib tests (exporters, keys, escaping, kinds, rejections) | 67/67 |
+| Contract locks | 11/11 |
+| Rust live E2E (engine up) | 1/1 |
+| Engine pytest (incl. DOCX magic bytes, PDF header/EOF, 400s) / ruff | 24/24 / clean |
+| TS typecheck / build / preview rebuild | clean / ✓ / ✓ |
+
+App runnable at close; engine restarted earlier in Phase 5 is unaffected by
+the additive endpoints until next restart (health verified).
+
+### Limitations / known trade-offs
+
+- DOCX/PDF styling is deliberately minimal (no headers/footers/page numbers
+  yet); the neutral block model keeps that additive.
+- No .csly/CSL-JSON export yet; BibTeX/RIS cover the reference-manager
+  round trip.
+- Exports directory grows without a cleanup pass (files never deleted
+  implicitly); a storage-manager sweep is a future hardening item.
+- PDF export embeds base-14 fonts only (no custom font bundling yet).
+
+### Next
+
+Phase 7 per spec: lecture transcription (SpeechToTextProvider over local
+whisper.cpp, mirroring the llama.cpp pattern: user-supplied binary, managed
+models, idle unload).
+
+## Phase 7 — Lecture transcription (complete)
+
+### Scope shipped
+
+- **`SpeechToTextProvider` trait** (`services/transcription.rs`, spec §47.7)
+  with `transcribe(audio)` + `check()` — the neutral seam spec §20 calls for;
+  a future provider (whisper server, other engine) slots in without touching
+  UI or pipeline.
+- **`WhisperCppProvider`**: runs the user-configured `whisper-cli` as a
+  one-shot subprocess per job (batch mode — no resident server and therefore
+  no idle-unload logic, unlike llama.cpp). Args: `-m <model> -f <wav> -oj -of
+  <workdir> [-l <lang>]`. Binary and GGML model paths are user settings
+  (`stt.*` keys, Settings → Speech); the app never bundles or downloads
+  models. Failures surface the CLI's stderr with exit status — actionable,
+  not raw.
+- **Honest audio handling**: 16 kHz mono PCM WAV is sniffed (RIFF walk to the
+  `fmt ` chunk) and passed through directly; anything else converts via
+  `ffmpeg -ar 16000 -ac 1 -c:a pcm_s16le` when ffmpeg is on PATH and
+  conversion is enabled — with a concrete error ("WAV is 44100 Hz", "not a WAV
+  file") when it is not.
+- **`-oj` JSON parsing**: `transcription[]` (`offsets.from/to` ms + `text`)
+  into `TranscriptionSegment`s, plus detected language and total duration.
+- **Transcript→document pipeline** (`library::save_transcription`): segments
+  grouped into ~1200-char chunks, each line prefixed `[mm:ss]`, stored as a
+  real `transcript` document (new `RefType::Transcript` — bibliography
+  renders it as a plain non-punctuated line, never a fake journal article)
+  through the same chunk writer the engine parse path uses, then embedded via
+  `ensure_document_embedded` — transcripts join FTS + vector hybrid search,
+  Ask and evidence matrices like any paper. Checksum dedup: re-transcribing
+  the same audio returns the existing transcript.
+- **Commands** (`commands/stt.rs`): `stt_check` (configured + cli/model/ffmpeg
+  probes), `stt_get_settings` / `stt_save_settings` (trim + language
+  normalisation), `stt_transcribe` (spawn_blocking, settings gate with an
+  actionable message, best-effort embeddings with a visible note when the
+  engine is offline). Four new contract locks pin the wire shapes.
+- **UI**: functional **Audio tab** (engine status dots, file picker,
+  transcribe → toast + transcript preview with `[mm:ss]` markers → Library),
+  **Settings → Speech** section (paths, browse, language, ffmpeg toggle,
+  found/missing chips), and the sidebar **Audio** entry unlocked.
+- **Preview mocks** for all four commands (`stt_check` reports configured;
+  `stt_transcribe` fabricates a transcript document + result), so the flow is
+  demonstrable in the browser preview.
+
+### Verification
+
+- `cargo test --lib`: **77 passed**, 0 warnings (8 new transcription tests:
+  WAV sniff accept/reject with concrete mismatch, fake-binary end-to-end,
+  actionable failure, ffmpeg refusal, check probes, timestamps/grouping;
+  STT settings roundtrip; transcript document pipeline).
+- `cargo test --test contract_locks`: **15 passed** (4 new STT locks; the
+  segment lock caught a real drift — segments initially serialised
+  `start_ms` — fixed to `startMs` before it could reach the UI).
+- `pnpm exec tsc --noEmit` + `pnpm build`: clean.
+- Engine suite untouched and green from Phase 6 (24 pytest, ruff clean) — no
+  engine changes in this phase.
+- Browser preview rebuilt; Audio tab demo: pick file → mock transcribe →
+  transcript card with `[mm:ss]` preview → Library.
+
+### Limitations / known trade-offs
+
+- One job at a time, UI-level only: a second transcription while one runs is
+  possible in the backend (each is an independent subprocess) but the Audio
+  tab serialises; a queue belongs with Phase 8's batch workflows.
+- No progress events: whisper-cli prints segment lines we don't yet stream;
+  the UI shows an indeterminate "Transcribing…" state. Streaming progress is
+  a natural Phase 8 addition alongside TTS.
+- Non-WAV conversion requires ffmpeg on PATH; we probe but never download it
+  (same user-owned tooling rule as whisper.cpp itself).
+- Whisper output keeps its own segment granularity; punctuation/paragraphing
+  quality follows the chosen model, not post-processing.
+
+### Next
+
+Phase 8 per spec: text-to-speech behind `TextToSpeechProvider` — read-aloud,
+5/10/20-minute audio summaries and podcast narration — plus transcription
+progress streaming if the spec's batch workflow needs it.
+
+## Phase 8 — Text-to-speech (complete)
+
+### Scope shipped
+
+- **`TextToSpeechProvider` trait** (`services/tts.rs`, spec §47.7) with
+  `render(text, hint)` + `check()` — the neutral seam that keeps GPL Piper
+  isolated from the app core (spec §7 license table).
+- **`PiperProvider`** (spec default): runs the user-installed `piper` binary
+  as a one-shot subprocess (`--model <onnx> --length-scale 1/speed
+  --output_file <wav>`, text on stdin). Binary + voice model paths are user
+  settings (`tts.*`); the app never bundles or downloads voices. Failures
+  surface piper's stderr with exit status.
+- **`MacOsSayProvider`** (cfg-gated macOS): zero-install fallback via the
+  built-in `say` (`--data-format=LEF32@22050`, voice + rate from settings).
+  Piper stays the default; `say` is explicit opt-in.
+- **Narration scripting** (`services/narration.rs`): read-aloud passes the
+  document's own text through light "speakable" cleanup (markdown/heading
+  stripping) with no AI; 5/10/20-minute summaries (~650/1300/2600 words) and
+  a two-host podcast segment (MAYA & Dr. PATEL, ≈1200 words) are generated by
+  the local model through the existing `AiProvider` seam under strict
+  spoken-prose-only prompts — no markdown that Piper would read aloud. No-AI
+  mode gates the AI kinds and keeps read-aloud (spec §35).
+- **Commands** (`commands/tts.rs`): `tts_check`, `tts_get/save_settings`
+  (provider normalisation, speed clamp 0.5–2.0), `tts_speak_document`
+  (read-aloud) and `tts_narrate` (AI kinds, model load-on-demand identical to
+  `ai_ask`). Audio lands in the managed `exports/` folder.
+- **MP3 export**: optional WAV→MP3 transcode (`-ac 1 -b:a 64k`) via ffmpeg
+  when enabled and on PATH; failures degrade to WAV with a logged note.
+- **UI**: Audio tab gains a **Speak a document** card (provider status chips,
+  ready-doc picker, narration-kind select, result card with duration/words/
+  size/engine + Reveal in Finder via the Phase 6 reveal path); Settings →
+  Speech gains the voice block (provider select, Piper paths, macOS voice,
+  speed slider, MP3 toggle).
+- **Preview mocks** for all five commands (`tts_check` reports ready;
+  narrate honours the No-AI mode gate), so the flow is demonstrable in the
+  browser preview.
+
+### Verification
+
+- `cargo test --lib`: **89 passed**, 0 warnings (12 new: Piper fake-binary
+  render with byte-exact WAV, actionable binary/model errors, stderr
+  surfacing, macOS say fake render, provider selection; narration speakable
+  cleanup, summary/podcast prompt + script checks, empty-output error,
+  sentence-boundary clipping; TTS settings roundtrip incl. unknown-provider
+  fallback).
+- `cargo test --test contract_locks`: **19 passed** (4 new TTS locks: settings,
+  status, narration result, audio/status).
+- `pnpm exec tsc --noEmit` + `pnpm build`: clean.
+- Engine suite untouched and green (24 pytest + ruff) — no engine changes.
+- Browser preview rebuilt; Speak demo: pick document → read-aloud → mock
+  audio card (duration · words · size · engine) → Reveal toast.
+
+### Limitations / known trade-offs
+
+- In-app playback needs a Tauri asset-protocol scope (`media-src` + asset
+  protocol allow-list); until then the UI follows the Phase 6 exports
+  convention and reveals the file in the OS file manager.
+- No streaming synthesis: long scripts render in one piper invocation, so a
+  20-minute summary takes tens of seconds (indeterminate progress only).
+  Chunked per-section synthesis is a future hardening item.
+- Podcast voices are single-voice (both hosts share one model); true
+  multi-voice needs per-line provider switching or a multi-speaker model.
+- `say` duration estimates assume 22.05 kHz stereo f32 output; the WAV path
+  (piper) is byte-exact, MP3 keeps the pre-transcode estimate.
+
+### Next
+
+Phase 9 per spec: platform installers (signed macOS .app/.dmg and Windows
+NSIS), bundling the sidecar and finalising the first-run experience — the
+final phase of the master build plan.
+
+## Phase 9 — Platform installers (complete)
+
+### Scope shipped
+
+- **Sidecar lifecycle** (`services/engine_runtime.rs`): a supervisor thread
+  that spawns the bundled document engine from
+  `Resources/sidecar/researchai-engine*` at startup (unless an engine already
+  answers on 127.0.0.1:8737 — the dev/screen flow is untouched), honours an
+  `engine.env` ops file, waits ≤30 s for `/health`, and kills the child on
+  app exit. Missing sidecar files are a normal dev condition: the supervisor
+  stays dormant and keeps probing so externally started engines are picked
+  up. Wired into `AppState` via `initialize_with_resources` (resource dir
+  only exists packaged).
+- **Bundle configuration**: `tauri.conf.json` now carries the generated
+  platform icon set (icns/ico/png via `tauri icon`), category, descriptions,
+  DMG/NSIS metadata, and the `packaging/resources/sidecar/*` resources
+  mapping. Targets: `dmg`+`app` (macOS), `nsis` (Windows), `appimage`+`deb`
+  (Linux, dev builds).
+- **Packaging scripts**: `scripts/package/collect-sidecar.mjs` assembles the
+  resources dir (frozen PyInstaller binary when present, `uv` fallback
+  launcher for dev machines, explicit skip mode);
+  `services/document-engine/packaging/pyinstaller.spec` + `run.py` freeze the
+  engine per-OS.
+- **First-run setup checklist** (Home, spec §48): live probes for document
+  engine, local AI (mode + model state), speech-to-text and voice output,
+  each with a concrete status line and a jump-to-fix button; replaces the
+  static "Planned in later phases" grid now that all phases have shipped.
+- **Release CI** (`.github/workflows/release.yml`): tag `v*` builds the
+  frozen sidecar (PyInstaller) then `tauri build` on a macOS arm64 + macOS
+  x64 + Windows matrix, uploads DMG/APP/NSIS artefacts; signing hooks read
+  `APPLE_CERTIFICATE` secrets when configured (ad-hoc otherwise, documented
+  Gatekeeper bypass).
+- **Docs**: PACKAGING.md documents the full sidecar → bundle → runtime path
+  and the release checklist; icons README flow now actually executed.
+
+### Verification
+
+- `cargo test`: **112/112** (92 lib incl. 3 new engine_runtime tests —
+  dormant classification, sidecar discovery, spawn+drop-kills-child — plus
+  19 contract locks and 1 live ingestion E2E), 0 warnings. The spawn test is
+  environment-aware: on a machine with the dev engine already answering it
+  asserts External classification (no double-spawn) instead.
+- `pnpm exec tsc --noEmit` + `pnpm build`: clean; preview checklist renders
+  live probe rows.
+- Real bundle attempt on this machine: `pnpm exec tauri build` (release
+  profile, full Rust compile) — configuration validated end-to-end by the
+  CLI; see Limitations for where artefacts land vs. CI.
+- Engine suite untouched (24 pytest + ruff clean); only a new frozen-entry
+  module was added.
+
+### Limitations / known trade-offs
+
+- Code signing/notarization needs an Apple Developer ID + secrets; builds
+  are ad-hoc signed until then (Gatekeeper right-click → Open, documented).
+- Windows NSIS artefacts are produced in CI only — no Windows machine in the
+  local loop; the config is validated by the same schema the CI uses.
+- The PyInstaller freeze is wired and scripted but a full frozen binary was
+  not produced locally (dev engine runs via uv/screen); release.yml runs it
+  on real runners per-OS.
+- The sidecar listens on a fixed loopback port (8737); two simultaneous app
+  instances share one engine (harmless — parse is stateless).
+
+### Next
+
+The master build plan is complete (Phases 0–9). Natural follow-ups beyond
+the plan: signed/notarized notarized release pipeline with real certificates,
+chunked TTS synthesis, in-app audio playback via the asset protocol, and a
+storage-manager sweep for exports growth (Phase 6 note).

@@ -36,3 +36,8 @@ data/cache/*
 !.env.example
 .DS_Store
 Thumbs.db
+
+# Phase 9 generated artefacts (rebuild with tauri icon / collect-sidecar)
+apps/desktop/src-tauri/icons/android/
+apps/desktop/src-tauri/icons/ios/
+apps/desktop/src-tauri/packaging/

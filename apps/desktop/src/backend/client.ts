@@ -15,17 +15,29 @@ import type {
   EvidenceSummary,
   EvidenceTable,
   EvidenceTrace,
+  ExportFile,
+  ExportFormat,
+  ExportKind,
+  ExportKindCapability,
+  ExportResult,
   FormattedReference,
   ImportMode,
   ImportSummary,
   LocalModel,
   ModelDownloadEvent,
+  NarrationKind,
+  NarrationResult,
   Project,
   Result,
   RetrievalStatus,
   RuntimeStatus,
   SearchResponse,
+  SttSettings,
+  SttStatus,
   SystemInfo,
+  TranscriptionJobResult,
+  TtsSettings,
+  TtsStatus,
 } from '@researchai/shared-types';
 
 /**
@@ -89,6 +101,30 @@ export const backend = {
   bibliographyList: (projectId: string, style: CitationStyle) =>
     invoke<FormattedReference[]>('bibliography_list', { projectId, style }),
 
+  // -- Academic exports (Phase 6, spec §32) ---------------------------------
+  exportCapabilities: () =>
+    invoke<{ formats: ExportFormat[]; kinds: ExportKindCapability[] }>(
+      'export_capabilities',
+    ),
+  exportDocument: (
+    projectId: string,
+    kind: ExportKind,
+    sourceId: string | null,
+    format: ExportFormat,
+    style: CitationStyle = 'apa',
+  ) =>
+    invoke<ExportResult>('export_document', {
+      projectId,
+      kind,
+      sourceId,
+      format,
+      style,
+    }),
+  exportBibliography: (projectId: string, format: 'bibtex' | 'ris') =>
+    invoke<ExportResult>('export_bibliography', { projectId, format }),
+  listExports: () => invoke<ExportFile[]>('list_exports'),
+  revealPath: (path: string) => invoke<string>('reveal_path', { path }),
+
   searchLibrary: (query: string, documentIds: string[] = [], limit = 12) =>
     invoke<SearchResponse>('search_library', { query, documentIds, limit }),
   retrievalStatus: () => invoke<RetrievalStatus>('retrieval_status'),
@@ -145,8 +181,25 @@ export const backend = {
   evidenceList: (projectId: string, limit = 50) =>
     invoke<EvidenceSummary[]>('evidence_list', { projectId, limit }),
   evidenceGet: (tableId: string) =>
-    invoke<EvidenceResponse>('evidence_get', { tableId }),
-  evidenceDelete: (tableId: string) => invoke<void>('evidence_delete', { tableId }),
+    invoke<EvidenceResponse>('evidence_get', { tableId }),  evidenceDelete: (tableId: string) => invoke<void>('evidence_delete', { tableId }),
+
+  // Speech-to-text (Phase 7) ----------------------------------------------
+  sttCheck: () => invoke<SttStatus>('stt_check'),
+  sttGetSettings: () => invoke<SttSettings>('stt_get_settings'),
+  sttSaveSettings: (settings: SttSettings) =>
+    invoke<SttSettings>('stt_save_settings', { settings }),
+  sttTranscribe: (projectId: string, audioPath: string) =>
+    invoke<TranscriptionJobResult>('stt_transcribe', { projectId, audioPath }),
+
+  // Text-to-speech (Phase 8) -----------------------------------------------
+  ttsCheck: () => invoke<TtsStatus>('tts_check'),
+  ttsGetSettings: () => invoke<TtsSettings>('tts_get_settings'),
+  ttsSaveSettings: (settings: TtsSettings) =>
+    invoke<TtsSettings>('tts_save_settings', { settings }),
+  ttsSpeakDocument: (documentId: string) =>
+    invoke<NarrationResult>('tts_speak_document', { documentId }),
+  ttsNarrate: (documentId: string, kind: NarrationKind) =>
+    invoke<NarrationResult>('tts_narrate', { documentId, kind }),
 
   probeDocumentEngine: () => invoke<boolean>('probe_document_engine'),
 };
@@ -269,6 +322,41 @@ interface MockEvidenceRecord {
   response: EvidenceResponse;
 }
 const MOCK_EVIDENCE: MockEvidenceRecord[] = [];
+
+// -- Export mocks (Phase 6) --------------------------------------------------
+
+const MOCK_EXPORTS: ExportFile[] = [];
+
+// -- Speech-to-text mocks (Phase 7) -------------------------------------------
+
+let MOCK_STT_SETTINGS: SttSettings = {
+  whisperCliPath: '/opt/whisper.cpp/build/bin/whisper-cli',
+  whisperModelPath: '/opt/whisper.cpp/models/ggml-base.bin',
+  language: 'auto',
+  convertWithFfmpeg: true,
+};
+
+// -- Text-to-speech mocks (Phase 8) -------------------------------------------
+
+let MOCK_TTS_SETTINGS: TtsSettings = {
+  provider: 'piper',
+  piperPath: '/opt/homebrew/bin/piper',
+  voiceModelPath: '/opt/piper/voices/en_US-amy-medium.onnx',
+  speed: 1.0,
+  macosVoice: 'Samantha',
+  mp3Enabled: true,
+};
+
+function mockNarration(fileName: string, words: number, engine: string): NarrationResult {
+  return {
+    audioPath: `ResearchAIData/exports/tts-${fileName}-${engine}.mp3`,
+    format: 'mp3',
+    bytes: words * 22,
+    durationMs: Math.round((words / 150) * 60_000),
+    words,
+    engine,
+  };
+}
 
 function mockEvidenceRow(
   doc: DocumentSummary,
@@ -773,6 +861,142 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
       const idx = MOCK_EVIDENCE.findIndex((r) => r.id === id);
       if (idx >= 0) MOCK_EVIDENCE.splice(idx, 1);
       return null as T;
+    }
+    // -- Academic exports (Phase 6) ------------------------------------------
+    case 'export_capabilities':
+      return {
+        formats: ['markdown', 'docx', 'pdf', 'bibtex', 'ris'],
+        kinds: [
+          { kind: 'analysis', formats: ['markdown', 'docx', 'pdf'] },
+          { kind: 'evidence_table', formats: ['markdown', 'docx', 'pdf', 'bibtex', 'ris'] },
+          { kind: 'bibliography', formats: ['markdown', 'docx', 'pdf', 'bibtex', 'ris'] },
+        ],
+      } as T;
+    case 'export_document': {
+      const kind = String(args?.['kind'] ?? '');
+      const format = String(args?.['format'] ?? 'markdown');
+      const name = `mock-${kind}-${new Date().toISOString().slice(0, 19).replaceAll(':', '-')}.${format === 'markdown' ? 'md' : format}`;
+      const file: ExportFile = {
+        name,
+        path: `ResearchAIData/exports/${name}`,
+        sizeBytes: 1024 + Math.floor(Math.random() * 4000),
+      };
+      MOCK_EXPORTS.unshift(file);
+      return {
+        path: file.path,
+        bytes: file.sizeBytes,
+        kind,
+        format,
+      } as T;
+    }
+    case 'export_bibliography': {
+      const format = String(args?.['format'] ?? 'bibtex');
+      const name = `mock-bibliography.${format === 'bibtex' ? 'bib' : 'ris'}`;
+      const file: ExportFile = {
+        name,
+        path: `ResearchAIData/exports/${name}`,
+        sizeBytes: 800,
+      };
+      MOCK_EXPORTS.unshift(file);
+      return { path: file.path, bytes: 800, kind: 'bibliography', format } as T;
+    }
+    case 'list_exports':
+      return clone(MOCK_EXPORTS) as T;
+    case 'reveal_path':
+      return String(args?.['path'] ?? '') as T;
+    // -- Speech-to-text (Phase 7) ---------------------------------------------
+    case 'stt_check': {
+      void args;
+      const s = MOCK_STT_SETTINGS;
+      return {
+        configured: Boolean(s.whisperCliPath && s.whisperModelPath),
+        cliFound: true,
+        modelFound: true,
+        ffmpegFound: true,
+        ...s,
+      } as T;
+    }
+    case 'stt_get_settings':
+      return clone(MOCK_STT_SETTINGS) as T;
+    case 'stt_save_settings': {
+      MOCK_STT_SETTINGS = clone(args?.['settings'] as SttSettings);
+      return clone(MOCK_STT_SETTINGS) as T;
+    }
+    case 'stt_transcribe': {
+      const projectId = String(args?.['projectId'] ?? '');
+      const audioPath = String(args?.['audioPath'] ?? '');
+      const fileName = audioPath.split('/').pop() || 'lecture.wav';
+      const doc: { -readonly [K in keyof DocumentSummary]: DocumentSummary[K] } = {
+        id: `mock-transcript-${Date.now()}`,
+        projectId,
+        fileName,
+        originalPath: audioPath,
+        managedPath: null,
+        documentType: 'transcript',
+        checksum: `mock-${Math.random().toString(36).slice(2)}`,
+        title: `Transcript: ${fileName.replace(/\.[^.]+$/, '')}`,
+        authors: null,
+        year: null,
+        doi: null,
+        journal: null,
+        volume: null,
+        issue: null,
+        pages: null,
+        publisher: null,
+        url: null,
+        refType: 'transcript',
+        indexingStatus: 'ready',
+        statusDetail: 'Local transcription · 15 min · en',
+        pageCount: null,
+        language: 'en',
+        importedAt: new Date().toISOString(),
+        chunkCount: 2,
+      };
+      MOCK_DOCS.push(doc);
+      return {
+        documentId: doc.id,
+        segments: 2,
+        durationMs: 912_000,
+        language: 'en',
+        detail: '',
+      } as T;
+    }
+    // -- Text-to-speech (Phase 8) ---------------------------------------------
+    case 'tts_check': {
+      void args;
+      const s = MOCK_TTS_SETTINGS;
+      return {
+        provider: s.provider,
+        binaryFound: true,
+        modelFound: true,
+        ffmpegFound: true,
+        ready: true,
+        outputDir: 'ResearchAIData/exports',
+        settings: clone(s),
+      } as T;
+    }
+    case 'tts_get_settings':
+      return clone(MOCK_TTS_SETTINGS) as T;
+    case 'tts_save_settings': {
+      MOCK_TTS_SETTINGS = clone(args?.['settings'] as TtsSettings);
+      return clone(MOCK_TTS_SETTINGS) as T;
+    }
+    case 'tts_speak_document': {
+      const doc = MOCK_DOCS[0];
+      const name = doc ? doc.fileName.replace(/\.[^.]+$/, '') : 'document';
+      return mockNarration(name, 2400, 'read_aloud') as T;
+    }
+    case 'tts_narrate': {
+      const kind = String(args?.['kind'] ?? 'summary_5');
+      if (!MOCK_SETTINGS.aiEnabled) {
+        throw new Error(
+          'AI is disabled (No-AI mode). Summaries and podcast narration need the local model — read-aloud still works.',
+        );
+      }
+      const doc = MOCK_DOCS[0];
+      const name = doc ? doc.fileName.replace(/\.[^.]+$/, '') : 'document';
+      const words = kind === 'podcast' ? 1200 : kind === 'summary_20' ? 2600 : kind === 'summary_10' ? 1300 : 650;
+      return mockNarration(name, words, kind === 'podcast' ? 'llama.cpp' : 'llama.cpp') as T;
     }
     default:
       throw new Error(`Browser preview has no mock for command "${cmd}".`);
