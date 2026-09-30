@@ -20,6 +20,7 @@ export type ViewId =
   | 'research'
   | 'notes'
   | 'evidence'
+  | 'bibliography'
   | 'audio'
   | 'exports'
   | 'settings';

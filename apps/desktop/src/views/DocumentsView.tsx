@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { DocumentSummary, IngestionStage } from '@researchai/shared-types';
+import type {
+  BibliographyUpdate,
+  DocumentSummary,
+  IngestionStage,
+  RefType,
+} from '@researchai/shared-types';
 import { backend } from '../backend/client';
 import { EmptyState } from '../components/EmptyState';
 import { Modal } from '../components/Modal';
@@ -25,6 +30,8 @@ export function DocumentsView() {
   const [importing, setImporting] = useState(false);
   const [reader, setReader] = useState<{ doc: DocumentSummary; text: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<DocumentSummary | null>(null);
+  const [bibDraft, setBibDraft] = useState<BibliographyUpdate | null>(null);
+  const [savingBib, setSavingBib] = useState(false);
   const pollRef = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
@@ -87,8 +94,57 @@ export function DocumentsView() {
     try {
       const text = await backend.getDocumentText(doc.id);
       setReader({ doc, text });
+      setBibDraft(null);
     } catch (err) {
       pushToast('error', err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function beginEditMetadata() {
+    if (!reader) return;
+    const { doc } = reader;
+    setBibDraft({
+      title: doc.title,
+      authors: doc.authors,
+      year: doc.year,
+      doi: doc.doi,
+      journal: doc.journal,
+      volume: doc.volume,
+      issue: doc.issue,
+      pages: doc.pages,
+      publisher: doc.publisher,
+      url: doc.url,
+      refType: doc.refType,
+    });
+  }
+
+  async function saveMetadata() {
+    if (!reader || !bibDraft) return;
+    setSavingBib(true);
+    try {
+      await backend.updateBibliography(reader.doc.id, bibDraft);
+      pushToast('success', 'Citation metadata updated.');
+      const updated = {
+        ...reader.doc,
+      } as { -readonly [K in keyof DocumentSummary]: DocumentSummary[K] };
+      if (bibDraft.title !== undefined) updated.title = bibDraft.title;
+      if (bibDraft.authors !== undefined) updated.authors = bibDraft.authors;
+      if (bibDraft.year !== undefined) updated.year = bibDraft.year;
+      if (bibDraft.doi !== undefined) updated.doi = bibDraft.doi;
+      if (bibDraft.journal !== undefined) updated.journal = bibDraft.journal;
+      if (bibDraft.volume !== undefined) updated.volume = bibDraft.volume;
+      if (bibDraft.issue !== undefined) updated.issue = bibDraft.issue;
+      if (bibDraft.pages !== undefined) updated.pages = bibDraft.pages;
+      if (bibDraft.publisher !== undefined) updated.publisher = bibDraft.publisher;
+      if (bibDraft.url !== undefined) updated.url = bibDraft.url;
+      if (bibDraft.refType) updated.refType = bibDraft.refType;
+      setReader({ doc: updated, text: reader.text });
+      setBibDraft(null);
+      void refresh();
+    } catch (err) {
+      pushToast('error', err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingBib(false);
     }
   }
 
@@ -194,9 +250,155 @@ export function DocumentsView() {
 
       {reader && (
         <Modal title={reader.doc.title || reader.doc.fileName} onClose={() => setReader(null)}>
+          <div className="card meta-card">
+            <div className="hit-head">
+              <div className="tiny muted">
+                {(reader.doc.authors || 'No authors recorded')
+                + (reader.doc.year != null ? ` · ${reader.doc.year}` : '')
+                + (reader.doc.journal ? ` · ${reader.doc.journal}` : '')}
+              </div>
+              {!bibDraft && (
+                <button type="button" className="btn ghost tiny-btn" onClick={beginEditMetadata}>
+                  Edit citation metadata
+                </button>
+              )}
+            </div>
+            {(reader.doc.doi || reader.doc.url) && (
+              <p className="tiny mono">
+                {reader.doc.doi ? `doi: ${reader.doc.doi}` : reader.doc.url}
+              </p>
+            )}
+
+            {bibDraft && (
+              <div className="meta-form">
+                <label>
+                  <span className="diag-label">Authors (semicolon-separated)</span>
+                  <input
+                    className="search-input"
+                    value={bibDraft.authors ?? ''}
+                    placeholder="Jane Doe; John Smith"
+                    onChange={(e) => setBibDraft({ ...bibDraft, authors: e.target.value })}
+                  />
+                </label>
+                <div className="ai-settings-grid">
+                  <label>
+                    <span className="diag-label">Title</span>
+                    <input
+                      className="search-input"
+                      value={bibDraft.title ?? ''}
+                      onChange={(e) => setBibDraft({ ...bibDraft, title: e.target.value })}
+                    />
+                  </label>
+                  <label>
+                    <span className="diag-label">Year</span>
+                    <input
+                      type="number"
+                      className="search-input"
+                      value={bibDraft.year ?? ''}
+                      onChange={(e) =>
+                        setBibDraft({
+                          ...bibDraft,
+                          year: e.target.value ? Number(e.target.value) : null,
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span className="diag-label">Reference type</span>
+                    <select
+                      className="search-input"
+                      value={bibDraft.refType ?? 'article'}
+                      onChange={(e) =>
+                        setBibDraft({ ...bibDraft, refType: e.target.value as RefType })
+                      }
+                    >
+                      {(['article', 'book', 'chapter', 'report', 'webpage', 'thesis'] as const).map(
+                        (t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </label>
+                </div>
+                <div className="ai-settings-grid">
+                  <label>
+                    <span className="diag-label">Journal / container</span>
+                    <input
+                      className="search-input"
+                      value={bibDraft.journal ?? ''}
+                      onChange={(e) => setBibDraft({ ...bibDraft, journal: e.target.value })}
+                    />
+                  </label>
+                  <label>
+                    <span className="diag-label">Volume</span>
+                    <input
+                      className="search-input"
+                      value={bibDraft.volume ?? ''}
+                      onChange={(e) => setBibDraft({ ...bibDraft, volume: e.target.value })}
+                    />
+                  </label>
+                  <label>
+                    <span className="diag-label">Issue</span>
+                    <input
+                      className="search-input"
+                      value={bibDraft.issue ?? ''}
+                      onChange={(e) => setBibDraft({ ...bibDraft, issue: e.target.value })}
+                    />
+                  </label>
+                  <label>
+                    <span className="diag-label">Pages</span>
+                    <input
+                      className="search-input"
+                      value={bibDraft.pages ?? ''}
+                      onChange={(e) => setBibDraft({ ...bibDraft, pages: e.target.value })}
+                    />
+                  </label>
+                  <label>
+                    <span className="diag-label">Publisher</span>
+                    <input
+                      className="search-input"
+                      value={bibDraft.publisher ?? ''}
+                      onChange={(e) => setBibDraft({ ...bibDraft, publisher: e.target.value })}
+                    />
+                  </label>
+                  <label>
+                    <span className="diag-label">DOI or URL</span>
+                    <input
+                      className="search-input"
+                      value={bibDraft.doi ?? bibDraft.url ?? ''}
+                      onChange={(e) => setBibDraft({ ...bibDraft, doi: e.target.value })}
+                    />
+                  </label>
+                </div>
+                <div className="field-row" style={{ marginTop: '0.5rem' }}>
+                  <button
+                    type="button"
+                    className="btn primary"
+                    disabled={savingBib}
+                    onClick={() => void saveMetadata()}
+                  >
+                    {savingBib ? 'Saving…' : 'Save metadata'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    onClick={() => setBibDraft(null)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <p className="tiny muted">
+                  Your corrections are authoritative: extraction hints never overwrite them
+                  (spec §31).
+                </p>
+              </div>
+            )}
+          </div>
           <p className="tiny muted">
             Extracted text ({reader.text.length.toLocaleString()} characters). The page-accurate
-            PDF viewer arrives in the next phase — page markers are preserved for citations.
+            PDF viewer arrives in a later phase — page markers are preserved for citations.
           </p>
           <pre className="reader-text">{reader.text}</pre>
         </Modal>

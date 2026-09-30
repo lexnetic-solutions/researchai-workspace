@@ -5,15 +5,15 @@ researchers. Import your papers, read them, question them with traceable
 citations, compare authors, and export academic artefacts — all on your own
 machine.
 
-> **Status: Phase 4 — Evidence matrices.** The app launches, manages projects,
-> imports documents (managed copy + checksum dedup), parses PDF/DOCX/TXT/MD/HTML
-> through the local Python engine, answers searches with **hybrid retrieval**
-> (FTS5 keyword + fastembed/sqlite-vec vectors, debug panel), asks questions
-> with **grounded local AI** (GGUF models via llama.cpp, citation-only answers),
-> and now builds **cross-document evidence matrices**: one row per document with
-> page-referenced excerpts, strength labels and an optional AI
-> findings/synthesis pass — deterministic and fully usable without AI.
-> Remaining phases (citations styling, exports, audio) are next.
+> **Status: Phase 5 — Citations & bibliography.** The app launches, manages
+> projects, imports documents (managed copy + checksum dedup), parses
+> PDF/DOCX/TXT/MD/HTML through the local Python engine, answers searches with
+> **hybrid retrieval** (FTS5 keyword + fastembed/sqlite-vec vectors, debug
+> panel), asks questions with **grounded local AI** (GGUF models via llama.cpp,
+> citation-only answers), builds **cross-document evidence matrices**, and now
+> formats **citations & bibliographies** (APA 7 · Harvard · Chicago) from
+> user-correctable metadata — deterministic, never AI-invented. Remaining
+> phases (exports, audio) are next.
 
 ## Repository layout
 

@@ -606,6 +606,16 @@ mod tests {
             document_type: "md".into(),
             checksum: "chk".into(),
             title: Some("Sample".into()),
+            authors: None,
+            year: None,
+            doi: None,
+            journal: None,
+            volume: None,
+            issue: None,
+            pages: None,
+            publisher: None,
+            url: None,
+            ref_type: "article".into(),
             indexing_status: IngestionStatus::Ready.as_str().into(),
             status_detail: None,
             page_count: None,
@@ -649,6 +659,8 @@ mod tests {
                 },
             ],
             error: None,
+            doi: None,
+            year: None,
         };
         crate::services::library::store_parse_result(&db, "doc-1", &parsed).unwrap();
         (dir, db)

@@ -58,3 +58,7 @@ class ParseResponse(BaseModel):
     sections: list[SectionSpan] = Field(default_factory=list)
     blocks: list[ParsedBlock] = Field(default_factory=list)
     error: str | None = None
+    # Phase 5 (spec §31): bibliographic hints extracted from the text.
+    # Hints only — the user's corrections stay authoritative.
+    doi: str | None = None
+    year: int | None = None

@@ -15,6 +15,7 @@ const NAV: readonly NavItem[] = [
   { id: 'search', label: 'Search', glyph: '⌕' },
   { id: 'research', label: 'Research AI', glyph: '✦' },
   { id: 'notes', label: 'Notes', glyph: '✎' },
+  { id: 'bibliography', label: 'Bibliography', glyph: '❡' },
   { id: 'evidence', label: 'Evidence', glyph: '⧉' },
   { id: 'audio', label: 'Audio', glyph: '♪', phase: 7 },
   { id: 'exports', label: 'Exports', glyph: '⤓', phase: 6 },

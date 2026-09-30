@@ -223,6 +223,21 @@ const MIGRATIONS: &[Migration] = &[
                 ON evidence_tables(project_id, created_at DESC);
         "#,
     },
+    Migration {
+        version: 6,
+        // Phase 5 bibliography (spec §31): structured, user-correctable
+        // citation metadata on documents. `authors` (migration 2) stays a
+        // display string; the formatter parses "A. Author; B. Author".
+        sql: r#"
+            ALTER TABLE documents ADD COLUMN journal TEXT;
+            ALTER TABLE documents ADD COLUMN volume TEXT;
+            ALTER TABLE documents ADD COLUMN issue TEXT;
+            ALTER TABLE documents ADD COLUMN pages TEXT;
+            ALTER TABLE documents ADD COLUMN publisher TEXT;
+            ALTER TABLE documents ADD COLUMN url TEXT;
+            ALTER TABLE documents ADD COLUMN ref_type TEXT NOT NULL DEFAULT 'article';
+        "#,
+    },
 ];
 
 impl Db {
@@ -358,8 +373,9 @@ impl Db {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT d.id, d.project_id, d.file_name, d.original_path, d.managed_path,
-                    d.document_type, d.checksum, d.title, d.indexing_status, d.status_detail,
-                    d.page_count, d.language, d.imported_at,
+                    d.document_type, d.checksum, d.title, d.authors, d.year, d.doi,
+                    d.journal, d.volume, d.issue, d.pages, d.publisher, d.url, d.ref_type,
+                    d.indexing_status, d.status_detail, d.page_count, d.language, d.imported_at,
                     (SELECT COUNT(*) FROM chunks c WHERE c.document_id = d.id) AS chunk_count
              FROM documents d
              WHERE d.project_id = ?1 AND d.checksum = ?2",
@@ -377,10 +393,11 @@ impl Db {
         conn.execute(
             "INSERT INTO documents (id, project_id, file_name, original_path, managed_path,
                                     mime_type, document_type, checksum, title, authors, year,
-                                    doi, imported_at, indexing_status, status_detail,
+                                    doi, journal, volume, issue, pages, publisher, url,
+                                    ref_type, imported_at, indexing_status, status_detail,
                                     page_count, language)
-             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, NULL, NULL, NULL, ?9, ?10, ?11,
-                     ?12, ?13)
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                     ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
              ON CONFLICT(project_id, checksum) DO NOTHING",
             rusqlite::params![
                 doc.id,
@@ -391,6 +408,16 @@ impl Db {
                 doc.document_type,
                 doc.checksum,
                 doc.title,
+                doc.authors,
+                doc.year,
+                doc.doi,
+                doc.journal,
+                doc.volume,
+                doc.issue,
+                doc.pages,
+                doc.publisher,
+                doc.url,
+                doc.ref_type,
                 doc.imported_at,
                 doc.indexing_status,
                 doc.status_detail,
@@ -405,8 +432,9 @@ impl Db {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT d.id, d.project_id, d.file_name, d.original_path, d.managed_path,
-                    d.document_type, d.checksum, d.title, d.indexing_status, d.status_detail,
-                    d.page_count, d.language, d.imported_at,
+                    d.document_type, d.checksum, d.title, d.authors, d.year, d.doi,
+                    d.journal, d.volume, d.issue, d.pages, d.publisher, d.url, d.ref_type,
+                    d.indexing_status, d.status_detail, d.page_count, d.language, d.imported_at,
                     (SELECT COUNT(*) FROM chunks c WHERE c.document_id = d.id) AS chunk_count
              FROM documents d
              WHERE d.project_id = ?1
@@ -422,8 +450,9 @@ impl Db {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT d.id, d.project_id, d.file_name, d.original_path, d.managed_path,
-                    d.document_type, d.checksum, d.title, d.indexing_status, d.status_detail,
-                    d.page_count, d.language, d.imported_at,
+                    d.document_type, d.checksum, d.title, d.authors, d.year, d.doi,
+                    d.journal, d.volume, d.issue, d.pages, d.publisher, d.url, d.ref_type,
+                    d.indexing_status, d.status_detail, d.page_count, d.language, d.imported_at,
                     (SELECT COUNT(*) FROM chunks c WHERE c.document_id = d.id) AS chunk_count
              FROM documents d WHERE d.id = ?1",
         )?;
@@ -518,8 +547,9 @@ impl Db {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT d.id, d.project_id, d.file_name, d.original_path, d.managed_path,
-                    d.document_type, d.checksum, d.title, d.indexing_status, d.status_detail,
-                    d.page_count, d.language, d.imported_at,
+                    d.document_type, d.checksum, d.title, d.authors, d.year, d.doi,
+                    d.journal, d.volume, d.issue, d.pages, d.publisher, d.url, d.ref_type,
+                    d.indexing_status, d.status_detail, d.page_count, d.language, d.imported_at,
                     (SELECT COUNT(*) FROM chunks c WHERE c.document_id = d.id) AS chunk_count
              FROM documents d
              WHERE d.indexing_status = 'waiting'
@@ -547,6 +577,58 @@ impl Db {
             let _ = std::fs::remove_file(path); // missing file is fine
         }
         let n = conn.execute("DELETE FROM documents WHERE id = ?1", [document_id])?;
+        if n == 0 {
+            return Err(AppError::msg("Document not found."));
+        }
+        Ok(())
+    }
+
+    /// Bibliographic hints from the parse engine (Phase 5): fill EMPTY
+    /// fields only — user corrections are authoritative (spec §31).
+    pub fn apply_bibliographic_hints(
+        &self,
+        document_id: &str,
+        doi: Option<&str>,
+        year: Option<i64>,
+    ) -> AppResult<()> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE documents SET doi = COALESCE(doi, ?2), year = COALESCE(year, ?3)
+             WHERE id = ?1",
+            rusqlite::params![document_id, doi, year],
+        )?;
+        Ok(())
+    }
+
+    /// User-correctable bibliographic metadata (spec §31: corrections are
+    /// authoritative over extracted values; AI suggestions never overwrite
+    /// silently).
+    pub fn update_document_bibliography(
+        &self,
+        document_id: &str,
+        b: &crate::services::documents::BibliographyUpdate,
+    ) -> AppResult<()> {
+        let conn = self.lock();
+        let n = conn.execute(
+            "UPDATE documents SET title = ?2, authors = ?3, year = ?4, doi = ?5,
+                    journal = ?6, volume = ?7, issue = ?8, pages = ?9, publisher = ?10,
+                    url = ?11, ref_type = COALESCE(?12, ref_type)
+             WHERE id = ?1",
+            rusqlite::params![
+                document_id,
+                b.title,
+                b.authors,
+                b.year,
+                b.doi,
+                b.journal,
+                b.volume,
+                b.issue,
+                b.pages,
+                b.publisher,
+                b.url,
+                b.ref_type,
+            ],
+        )?;
         if n == 0 {
             return Err(AppError::msg("Document not found."));
         }
@@ -834,12 +916,22 @@ fn row_to_document(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocumentRow> {
         document_type: row.get(5)?,
         checksum: row.get(6)?,
         title: row.get(7)?,
-        indexing_status: row.get(8)?,
-        status_detail: row.get(9)?,
-        page_count: row.get(10)?,
-        language: row.get(11)?,
-        imported_at: row.get(12)?,
-        chunk_count: row.get(13)?,
+        authors: row.get(8)?,
+        year: row.get(9)?,
+        doi: row.get(10)?,
+        journal: row.get(11)?,
+        volume: row.get(12)?,
+        issue: row.get(13)?,
+        pages: row.get(14)?,
+        publisher: row.get(15)?,
+        url: row.get(16)?,
+        ref_type: row.get(17)?,
+        indexing_status: row.get(18)?,
+        status_detail: row.get(19)?,
+        page_count: row.get(20)?,
+        language: row.get(21)?,
+        imported_at: row.get(22)?,
+        chunk_count: row.get(23)?,
     })
 }
 
@@ -1157,6 +1249,76 @@ pub(crate) mod tests {
         db.delete_evidence_table("et-1").unwrap();
         assert!(db.get_evidence_table("et-1").is_err());
         assert!(db.delete_evidence_table("et-1").is_err());
+    }
+
+    #[test]
+    fn bibliography_update_persists() {
+        let (_dir, db) = temp_db();
+        let project = db.create_project("P", None).unwrap();
+        let doc_id = uuid::Uuid::new_v4().to_string();
+        db.insert_document(crate::services::documents::DocumentRow {
+            id: doc_id.clone(),
+            project_id: project.id,
+            file_name: "paper.pdf".into(),
+            original_path: "/tmp/paper.pdf".into(),
+            managed_path: None,
+            document_type: "pdf".into(),
+            checksum: "c".into(),
+            title: None,
+            authors: None,
+            year: None,
+            doi: None,
+            journal: None,
+            volume: None,
+            issue: None,
+            pages: None,
+            publisher: None,
+            url: None,
+            ref_type: "article".into(),
+            indexing_status: "ready".into(),
+            status_detail: None,
+            page_count: None,
+            language: None,
+            imported_at: crate::db::now_iso_pub(),
+            chunk_count: 0,
+        })
+        .unwrap();
+
+        db.update_document_bibliography(
+            &doc_id,
+            &crate::services::documents::BibliographyUpdate {
+                title: Some("Delta retreat under sea-level rise".into()),
+                authors: Some("J. Smith; A. Jones".into()),
+                year: Some(2021),
+                doi: Some("10.1234/deltas".into()),
+                journal: Some("Coastal Research".into()),
+                volume: Some("12".into()),
+                issue: Some("3".into()),
+                pages: Some("101–118".into()),
+                publisher: None,
+                url: None,
+                ref_type: Some("article".into()),
+            },
+        )
+        .unwrap();
+        let doc = db.get_document(&doc_id).unwrap();
+        assert_eq!(doc.authors.as_deref(), Some("J. Smith; A. Jones"));
+        assert_eq!(doc.year, Some(2021));
+        assert_eq!(doc.journal.as_deref(), Some("Coastal Research"));
+
+        // Corrections are authoritative — clearing works too.
+        db.update_document_bibliography(
+            &doc_id,
+            &crate::services::documents::BibliographyUpdate {
+                doi: None,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(db.get_document(&doc_id).unwrap().doi, None);
+        assert!(db
+            .update_document_bibliography("missing", &Default::default())
+            .is_err());
     }
 
     #[test]

@@ -135,7 +135,25 @@ stored as JSON (see [AI.md](AI.md) / [ARCHITECTURE.md](ARCHITECTURE.md) for
 the shape): rows are per-document with evidence-strength labels derived from
 the retrieval path, never a truth score.
 
-## Planned schema (Phase 5+)
+## Phase 5 schema (migration 6 — implemented)
+
+```sql
+ALTER TABLE documents ADD COLUMN journal TEXT;
+ALTER TABLE documents ADD COLUMN volume TEXT;
+ALTER TABLE documents ADD COLUMN issue TEXT;
+ALTER TABLE documents ADD COLUMN pages TEXT;
+ALTER TABLE documents ADD COLUMN publisher TEXT;
+ALTER TABLE documents ADD COLUMN url TEXT;
+ALTER TABLE documents ADD COLUMN ref_type TEXT NOT NULL DEFAULT 'article';
+```
+
+Structured, user-correctable citation metadata (spec §31). The engine's
+parse hints (doi, year) fill EMPTY fields only; user corrections via
+`update_document_bibliography` are authoritative. The formatter parses
+`authors` ("Jane Doe; John Smith") into individuals — see
+[CITATIONS.md](CITATIONS.md).
+
+## Planned schema (Phase 6+)
 
 ```sql
 citations(id, document_id → documents, source_chunk_id, citation_metadata,

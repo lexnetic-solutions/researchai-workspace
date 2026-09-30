@@ -22,6 +22,22 @@ from pathlib import Path
 from ..contracts import ParsedBlock, ParseResponse, SectionSpan
 from . import not_implemented, register
 
+# Phase 5 (spec §31): bibliographic hints scraped from the document text.
+# Hints only — the user's metadata corrections stay authoritative.
+_DOI_RE = re.compile(
+    r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+", re.IGNORECASE
+)
+_YEAR_RE = re.compile(r"\b(19[5-9]\d|20[0-4]\d)\b")
+
+
+def _bibliographic_hints(text: str) -> tuple[str | None, int | None]:
+    """First DOI and a plausible publication year found in the text."""
+    doi = _DOI_RE.search(text[:20000]) if text else None
+    # Trim trailing punctuation that markdown/pdfs often attach to the DOI.
+    doi_value = doi.group(0).rstrip(".,;)") if doi else None
+    year = _YEAR_RE.search(text[:20000]) if text else None
+    return (doi_value, int(year.group(1)) if year else None)
+
 
 def _ok(
     document_id: str,
@@ -32,6 +48,7 @@ def _ok(
     title: str | None = None,
     ext: str | None = None,
 ) -> ParseResponse:
+    doi, year = _bibliographic_hints(text)
     return ParseResponse(
         document_id=document_id,
         ok=True,
@@ -40,6 +57,8 @@ def _ok(
         title=title,
         sections=sections,
         blocks=blocks,
+        doi=doi,
+        year=year,
     )
 
 

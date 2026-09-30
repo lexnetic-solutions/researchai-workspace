@@ -49,6 +49,19 @@ pub struct DocumentRow {
     pub document_type: String,
     pub checksum: String,
     pub title: Option<String>,
+    /// Display string: "A. Author; B. Author" (migration 2). The citation
+    /// formatter parses it into individual authors (spec §31).
+    pub authors: Option<String>,
+    pub year: Option<i64>,
+    pub doi: Option<String>,
+    pub journal: Option<String>,
+    pub volume: Option<String>,
+    pub issue: Option<String>,
+    pub pages: Option<String>,
+    pub publisher: Option<String>,
+    pub url: Option<String>,
+    /// "article" | "book" | "chapter" | "report" | "webpage" | "thesis" (§31).
+    pub ref_type: String,
     pub indexing_status: String,
     pub status_detail: Option<String>,
     pub page_count: Option<i64>,
@@ -71,6 +84,12 @@ pub struct EngineParseResponse {
     #[serde(default)]
     pub blocks: Vec<EngineBlock>,
     pub error: Option<String>,
+    /// Phase 5 bibliographic hints from the engine (hints only — the user's
+    /// corrections stay authoritative, spec §31).
+    #[serde(default)]
+    pub doi: Option<String>,
+    #[serde(default)]
+    pub year: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,6 +99,25 @@ pub struct EngineSection {
     pub page_start: Option<i64>,
     pub page_end: Option<i64>,
     pub order_index: i64,
+}
+
+/// User-editable bibliographic metadata (spec §31). `None` clears a field,
+/// except `ref_type` where `None` keeps the current value (the column is
+/// NOT NULL and every document must have a reference type).
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct BibliographyUpdate {
+    pub title: Option<String>,
+    pub authors: Option<String>,
+    pub year: Option<i64>,
+    pub doi: Option<String>,
+    pub journal: Option<String>,
+    pub volume: Option<String>,
+    pub issue: Option<String>,
+    pub pages: Option<String>,
+    pub publisher: Option<String>,
+    pub url: Option<String>,
+    pub ref_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

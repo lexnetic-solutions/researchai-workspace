@@ -34,6 +34,7 @@ mod tests {
     use researchai_lib::services::documents::DocumentRow;
     use researchai_lib::services::hardware::SystemInfo;
     use researchai_lib::services::llm_runtime::{LoadState, RuntimeStatus};
+    use researchai_lib::services::citations::{self, CitationStyle};
     use researchai_lib::services::projects::ProjectRow;
     use researchai_lib::services::settings::{Settings, Theme};
     use researchai_lib::services::{analysis, evidence, retrieval};
@@ -80,6 +81,16 @@ mod tests {
             document_type: "txt".into(),
             checksum: "c".into(),
             title: None,
+            authors: None,
+            year: None,
+            doi: None,
+            journal: None,
+            volume: None,
+            issue: None,
+            pages: None,
+            publisher: None,
+            url: None,
+            ref_type: "article".into(),
             indexing_status: "ready".into(),
             status_detail: None,
             page_count: None,
@@ -98,6 +109,16 @@ mod tests {
                 "documentType",
                 "checksum",
                 "title",
+                "authors",
+                "year",
+                "doi",
+                "journal",
+                "volume",
+                "issue",
+                "pages",
+                "publisher",
+                "url",
+                "refType",
                 "indexingStatus",
                 "statusDetail",
                 "pageCount",
@@ -479,6 +500,43 @@ mod tests {
         let json = serde_json::to_string(&resp.table).unwrap();
         let parsed: evidence::EvidenceTable = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.question, "q");
+    }
+
+    #[test]
+    fn formatted_reference_keys_and_wire_shape() {
+        let doc = researchai_lib::services::documents::DocumentRow {
+            id: "d".into(),
+            project_id: "p".into(),
+            file_name: "paper.pdf".into(),
+            original_path: "/p".into(),
+            managed_path: None,
+            document_type: "pdf".into(),
+            checksum: "c".into(),
+            title: Some("T".into()),
+            authors: Some("A. Author".into()),
+            year: Some(2024),
+            doi: None,
+            journal: Some("J".into()),
+            volume: None,
+            issue: None,
+            pages: None,
+            publisher: None,
+            url: None,
+            ref_type: "article".into(),
+            indexing_status: "ready".into(),
+            status_detail: None,
+            page_count: None,
+            language: None,
+            imported_at: "t".into(),
+            chunk_count: 0,
+        };
+        let r = citations::format_reference(&doc, CitationStyle::Apa);
+        assert_eq!(
+            keys(&r),
+            sorted(&["documentId", "style", "reference", "inText", "incomplete"])
+        );
+        assert!(r.reference.contains("Author"));
+        assert!(r.in_text.contains("2024"));
     }
 
     #[test]

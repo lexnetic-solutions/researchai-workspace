@@ -358,6 +358,10 @@ export function ResearchView() {
                       </li>
                     ))}
                   </ol>
+                  <p className="tiny muted">
+                    Format these as citations in the Bibliography view (APA 7 · Harvard ·
+                    Chicago) — metadata corrections in the Library reader are authoritative.
+                  </p>
                 </>
               )}
             </div>

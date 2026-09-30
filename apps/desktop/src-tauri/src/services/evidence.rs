@@ -19,7 +19,6 @@ use serde::Serialize;
 use crate::db::Db;
 use crate::error::AppError;
 use crate::services::ai::{AiProvider, CompletionRequest};
-use crate::services::analysis::PROMPT_VERSION;
 use crate::services::retrieval;
 
 /// Bump when AI prompt wording for evidence tables changes.
@@ -407,7 +406,7 @@ const SYNTHESIS_SYSTEM: &str = "You are ResearchAI, writing the synthesis row of
 mod tests {
     use super::*;
     use crate::db::tests::temp_dir_for;
-    use crate::services::ai::{CompletionOutput, EchoProvider};
+    use crate::services::ai::EchoProvider;
     use crate::services::documents::{DocumentRow, EngineBlock, EngineParseResponse};
 
     fn db_with_project(label: &str) -> (crate::db::tests::TempDir, Db, String) {
@@ -428,6 +427,16 @@ mod tests {
             document_type: "txt".into(),
             checksum: uuid::Uuid::new_v4().to_string(),
             title: None,
+            authors: None,
+            year: None,
+            doi: None,
+            journal: None,
+            volume: None,
+            issue: None,
+            pages: None,
+            publisher: None,
+            url: None,
+            ref_type: "article".into(),
             indexing_status: "ready".into(),
             status_detail: None,
             page_count: Some(2),
@@ -456,6 +465,8 @@ mod tests {
                 })
                 .collect(),
             error: None,
+            doi: None,
+            year: None,
         };
         db.replace_sections_and_chunks(&doc_id, &parsed).unwrap();
         doc_id

@@ -7,12 +7,15 @@ import type {
   AnalysisResponse,
   AnalysisSummary,
   AppSettings,
+  BibliographyUpdate,
+  CitationStyle,
   DiagnosticsReport,
   DocumentSummary,
   EvidenceResponse,
   EvidenceSummary,
   EvidenceTable,
   EvidenceTrace,
+  FormattedReference,
   ImportMode,
   ImportSummary,
   LocalModel,
@@ -79,6 +82,12 @@ export const backend = {
     invoke<void>('delete_document', { documentId }),
   getDocumentText: (documentId: string) =>
     invoke<string>('get_document_text', { documentId }),
+
+  // -- Citations & bibliography (Phase 5, spec §31) -------------------------
+  updateBibliography: (documentId: string, update: BibliographyUpdate) =>
+    invoke<void>('update_document_bibliography', { documentId, update }),
+  bibliographyList: (projectId: string, style: CitationStyle) =>
+    invoke<FormattedReference[]>('bibliography_list', { projectId, style }),
 
   searchLibrary: (query: string, documentIds: string[] = [], limit = 12) =>
     invoke<SearchResponse>('search_library', { query, documentIds, limit }),
@@ -407,6 +416,16 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
           documentType: ext,
           checksum: `mock-${Math.random().toString(36).slice(2)}`,
           title: null,
+          authors: null,
+          year: null,
+          doi: null,
+          journal: null,
+          volume: null,
+          issue: null,
+          pages: null,
+          publisher: null,
+          url: null,
+          refType: 'article',
           indexingStatus: 'parsing',
           statusDetail: null,
           pageCount: null,
@@ -437,6 +456,50 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
         '. ',
         '.\n\n',
       ) as T;
+    // -- Citations & bibliography (Phase 5) ----------------------------------
+    case 'update_document_bibliography': {
+      const id = String(args?.['documentId'] ?? '');
+      const update = (args?.['update'] ?? {}) as BibliographyUpdate;
+      const doc = MOCK_DOCS.find((d) => d.id === id);
+      if (!doc) throw new Error('Document not found.');
+      const mutable = doc as { -readonly [K in keyof DocumentSummary]: DocumentSummary[K] };
+      if (update.title !== undefined) mutable.title = update.title;
+      if (update.authors !== undefined) mutable.authors = update.authors;
+      if (update.year !== undefined) mutable.year = update.year;
+      if (update.doi !== undefined) mutable.doi = update.doi;
+      if (update.journal !== undefined) mutable.journal = update.journal;
+      if (update.volume !== undefined) mutable.volume = update.volume;
+      if (update.issue !== undefined) mutable.issue = update.issue;
+      if (update.pages !== undefined) mutable.pages = update.pages;
+      if (update.publisher !== undefined) mutable.publisher = update.publisher;
+      if (update.url !== undefined) mutable.url = update.url;
+      if (update.refType) mutable.refType = update.refType;
+      return null as T;
+    }
+    case 'bibliography_list': {
+      const style = (String(args?.['style'] ?? 'apa') || 'apa') as CitationStyle;
+      const refs: FormattedReference[] = MOCK_DOCS.filter(
+        (d) => d.indexingStatus === 'ready',
+      ).map((d) => {
+        const authors = (d.authors ?? 'Unknown Author').split(';').map((s) => s.trim());
+        const year = d.year ?? 'n.d.';
+        const title = d.title ?? d.fileName;
+        const reference =
+          style === 'apa'
+            ? `${authors.join(', & ')} (${year}). ${title}.`
+            : style === 'harvard'
+              ? `${authors.join(' and ')} (${year}) ‘${title}’.`
+              : `${authors.join(', ')}. “${title}.”`;
+        return {
+          documentId: d.id,
+          style,
+          reference: `${reference} (preview)`,
+          inText: `(${authors[0]}, ${year})`,
+          incomplete: d.title == null || d.year == null,
+        };
+      });
+      return refs as T;
+    }
     case 'search_library': {
       const q = String(args?.['query'] ?? '');
       const hits = MOCK_DOCS.filter((d) => d.indexingStatus === 'ready').map((d, i) => ({

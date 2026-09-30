@@ -9,6 +9,7 @@ import { DocumentsView } from './views/DocumentsView';
 import { SearchView } from './views/SearchView';
 import { ResearchView } from './views/ResearchView';
 import { NotesView } from './views/NotesView';
+import { BibliographyView } from './views/BibliographyView';
 import { EvidenceView } from './views/EvidenceView';
 import { AudioView } from './views/AudioView';
 import { ExportsView } from './views/ExportsView';
@@ -33,6 +34,8 @@ function CurrentView() {
       return <NotesView />;
     case 'evidence':
       return <EvidenceView />;
+    case 'bibliography':
+      return <BibliographyView />;
     case 'audio':
       return <AudioView />;
     case 'exports':

@@ -60,6 +60,8 @@ pub fn run() {
             commands::evidence::evidence_list,
             commands::evidence::evidence_get,
             commands::evidence::evidence_delete,
+            commands::citations::update_document_bibliography,
+            commands::citations::bibliography_list,
             commands::system::get_settings,
             commands::system::set_theme,
             commands::system::set_ai_enabled,

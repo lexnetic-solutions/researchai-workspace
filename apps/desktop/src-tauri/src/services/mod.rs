@@ -2,6 +2,7 @@
 
 pub mod ai;
 pub mod analysis;
+pub mod citations;
 pub mod diagnostics;
 pub mod documents;
 pub mod engine_client;

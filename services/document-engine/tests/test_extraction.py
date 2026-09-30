@@ -32,6 +32,29 @@ def test_markdown_headings_sections_offsets(tmp_path: Path) -> None:
         assert content[b.start_offset : b.end_offset] == b.text
 
 
+def test_bibliographic_hints_doi_and_year(tmp_path: Path) -> None:
+    """Phase 5 (spec §31): DOI + year are scraped as hints from the text."""
+    content = (
+        "# References context\n\n"
+        "This study extends Smith 2019. Related work: Jones (2021) shows delta "
+        "retreat accelerates. Full citation: https://doi.org/10.1016/j.coastal.2021.103456.\n"
+    )
+    path = _write(tmp_path, "paper.md", content.encode())
+    res = get_parser("md")(path)
+    assert res.ok
+    assert res.doi == "10.1016/j.coastal.2021.103456"  # trailing period trimmed
+    assert res.year in (2019, 2021)  # first plausible year in the text
+
+
+def test_bibliographic_hints_absent_are_none(tmp_path: Path) -> None:
+    content = "# Notes\n\nNo citation metadata in here at all.\n"
+    path = _write(tmp_path, "plain.md", content.encode())
+    res = get_parser("md")(path)
+    assert res.ok
+    assert res.doi is None
+    assert res.year is None
+
+
 def test_txt_paragraphs_roundtrip(tmp_path: Path) -> None:
     content = "Alpha paragraph.\n\nBeta paragraph.\n"
     path = _write(tmp_path, "notes.txt", content.encode())

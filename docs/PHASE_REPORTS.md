@@ -350,3 +350,92 @@ App runnable at close; all work uncommitted on `main`.
 Phase 5 per spec: citations & bibliography — Citation.js/CSL formatting
 (APA 7 / Harvard / Chicago) behind `citation-core`, user-correctable
 metadata, and in-text citation resolution into the reader.
+
+---
+
+## Phase 5 — Citations & bibliography (complete)
+
+### Scope shipped
+
+**Pre-phase audit** — reviewed Phases 0–4 end-to-end (plugins/capabilities,
+CSP, CI, dependency wiring, full test battery). Fixed: CI now runs `ruff`
+and the Rust unit + contract-lock suites; removed the dead
+`pnpm.onlyBuiltDependencies` block (pnpm 11 reads it from
+pnpm-workspace.yaml). Committed as `822e5ed`.
+
+**Licensing decision (deviation, documented)** — the spec suggested
+Citation.js; it is **AGPL-3.0** and flagged for commercial review in
+THIRD_PARTY_LICENSES.md. Shipped instead: a built-in deterministic
+formatter — zero new dependencies, MIT-clean, offline. The
+`CitationFormatter` trait keeps a CSL engine swappable
+([CITATIONS.md](CITATIONS.md)).
+
+**Rust core** —
+[citations.rs](../apps/desktop/src-tauri/src/services/citations.rs)
+
+- APA 7, Harvard, Chicago author-date formatters over structured metadata:
+  author parsing ("Doe, Jane; Smith, J."), initials, et-al collapse,
+  container variants (journal / book / webpage), DOI links, graceful
+  degradation with an `incomplete` flag when title/year are missing.
+- Alphabetised project bibliography (references shape, stable tiebreak).
+- In-text citations: APA joins two authors with "&", Harvard with "and",
+  3+ collapse to et al., no-author falls back to the title, no-year → n.d.
+- Migration 6: bibliographic columns on `documents` (journal, volume,
+  issue, pages, publisher, url, ref_type NOT NULL DEFAULT 'article').
+- `update_document_bibliography` — user corrections are authoritative;
+  `ref_type=None` keeps the current value (NOT NULL column).
+- `apply_bibliographic_hints` — engine hints fill EMPTY fields only.
+
+**Engine** — parse responses now carry DOI/year **hints** scraped from the
+document text (first DOI with trailing punctuation trimmed, plausible
+publication year); wired into the ingestion success path without touching
+user-corrected fields.
+
+**IPC + contract locks** — `update_document_bibliography`,
+`bibliography_list`; `DocumentRow` wire format extended by 10 keys and the
+contract locks updated (11 suites); `FormattedReference` locked.
+
+**Frontend** —
+[BibliographyView.tsx](../apps/desktop/src/views/BibliographyView.tsx),
+[DocumentsView.tsx](../apps/desktop/src/views/DocumentsView.tsx)
+
+- New Bibliography view: APA 7 / Harvard / Chicago selector, alphabetised
+  formatted list, in-text form per entry, incomplete-metadata chips, copy
+  per reference and copy-all.
+- Library reader: citation-metadata panel (authors, year, ref type, journal,
+  volume, issue, pages, publisher, DOI/URL) with a save flow and the
+  "corrections are authoritative" note.
+- Research evidence cards point at the Bibliography view.
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| Rust lib tests (formatter styles/variants, hints, bibliography CRUD) | 56/56 |
+| Contract locks (extended wire format) | 11/11 |
+| Rust live E2E (engine up, restarted with new fields) | 1/1 |
+| Engine pytest (incl. DOI/year hint extraction) / ruff | 20/20 / clean |
+| TS typecheck / node tests / build / preview | clean / 7/7 / ✓ / ✓ |
+| Preview: import → Bibliography renders formatted entry | ✓ |
+
+Self-deadlock found and fixed during development: `bibliography()` held the
+DB mutex across `get_document` (re-locking) — ids are now collected under a
+scoped lock. App runnable at close; engine restarted with the new `/parse`
+fields and verified healthy (fastembed, 384-dim).
+
+### Limitations / known trade-offs
+
+- Three styles implemented by hand; exotic metadata (multiple containers,
+  edition fields, translated titles) is not modelled yet.
+- No CSL import; MLA/IEEE/Vancouver arrive as new formatters or a CSL engine
+  if licensing is accepted.
+- Author parsing is best-effort on the display string; no separate given/
+  family storage yet.
+- `citations` table (chunk-level citation links, spec §31) is deferred to
+  the evidence/exports work — bibliography formatting doesn't need it.
+
+### Next
+
+Phase 6 per spec: academic exports — summaries and evidence matrices to
+Markdown/DOCX/PDF, bibliography export (.bib/.ris/.csly), behind the
+`ExportProvider` interface.

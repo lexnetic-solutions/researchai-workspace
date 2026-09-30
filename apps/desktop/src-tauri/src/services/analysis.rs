@@ -412,6 +412,16 @@ mod tests {
             document_type: "txt".into(),
             checksum: uuid::Uuid::new_v4().to_string(),
             title: None,
+            authors: None,
+            year: None,
+            doi: None,
+            journal: None,
+            volume: None,
+            issue: None,
+            pages: None,
+            publisher: None,
+            url: None,
+            ref_type: "article".into(),
             indexing_status: "ready".into(),
             status_detail: None,
             page_count: Some(3),
@@ -441,6 +451,8 @@ mod tests {
                 })
                 .collect(),
             error: None,
+            doi: None,
+            year: None,
         };
         db.replace_sections_and_chunks(&doc_id, &parsed).unwrap();
         doc_id

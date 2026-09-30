@@ -52,12 +52,56 @@ export interface DocumentSummary {
   readonly documentType: string;
   readonly checksum: string;
   readonly title: string | null;
+  /** Display string: "Jane Doe; John Smith" (parsed by the formatter). */
+  readonly authors: string | null;
+  readonly year: number | null;
+  readonly doi: string | null;
+  readonly journal: string | null;
+  readonly volume: string | null;
+  readonly issue: string | null;
+  readonly pages: string | null;
+  readonly publisher: string | null;
+  readonly url: string | null;
+  readonly refType: RefType;
   readonly indexingStatus: IngestionStage;
   readonly statusDetail: string | null;
   readonly pageCount: number | null;
   readonly language: string | null;
   readonly importedAt: string;
   readonly chunkCount: number;
+}
+
+// ---------------------------------------------------------------------------
+// Citations & bibliography (Phase 5, spec §31)
+// ---------------------------------------------------------------------------
+
+export type RefType = 'article' | 'book' | 'chapter' | 'report' | 'webpage' | 'thesis';
+
+export type CitationStyle = 'apa' | 'harvard' | 'chicago';
+
+/** One formatted bibliography entry (deterministic, metadata-driven). */
+export interface FormattedReference {
+  readonly documentId: string;
+  readonly style: CitationStyle;
+  readonly reference: string;
+  readonly inText: string;
+  /** True when key fields (title/year) are missing — correct the metadata. */
+  readonly incomplete: boolean;
+}
+
+/** User-correctable metadata patch; null clears a field (refType keeps). */
+export interface BibliographyUpdate {
+  title?: string | null;
+  authors?: string | null;
+  year?: number | null;
+  doi?: string | null;
+  journal?: string | null;
+  volume?: string | null;
+  issue?: string | null;
+  pages?: string | null;
+  publisher?: string | null;
+  url?: string | null;
+  refType?: RefType;
 }
 
 /** Result of an import batch (per-file errors are isolated, spec §42). */

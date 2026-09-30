@@ -82,6 +82,16 @@ pub fn import_file(
         document_type: document_type.clone(),
         checksum,
         title: None,
+        authors: None,
+        year: None,
+        doi: None,
+        journal: None,
+        volume: None,
+        issue: None,
+        pages: None,
+        publisher: None,
+        url: None,
+        ref_type: "article".into(),
         indexing_status: IngestionStatus::Waiting.as_str().to_string(),
         status_detail: None,
         page_count: None,
@@ -112,6 +122,13 @@ pub fn store_parse_result(
         IngestionStatus::Indexing,
     )?;
     db.replace_sections_and_chunks(document_id, parsed)?;
+
+    // Bibliographic hints from the engine (Phase 5, spec §31): fill EMPTY
+    // fields only — user corrections are authoritative and never overwritten.
+    if parsed.doi.is_some() || parsed.year.is_some() {
+        db.apply_bibliographic_hints(document_id, parsed.doi.as_deref(), parsed.year)?;
+    }
+
     db.set_document_status(document_id, IngestionStatus::Ready, None)?;
     Ok(())
 }
