@@ -1,0 +1,37 @@
+[package]
+name = "researchai"
+version = "0.1.0"
+description = "ResearchAI Workspace — private, offline-first AI research intelligence"
+authors = ["ResearchAI Workspace contributors"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "researchai_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+sqlite-vec = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+sha2 = "0.10"
+hex = "0.4"
+thiserror = "2"
+log = "0.4"
+sysinfo = "0.33"
+ureq = { version = "3", features = ["json"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true

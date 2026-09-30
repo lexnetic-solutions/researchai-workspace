@@ -1,0 +1,28 @@
+{
+  "name": "research-ai-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ResearchAI Workspace — a private, offline-first AI research intelligence workspace for students and researchers.",
+  "license": "MIT",
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "setup": "node scripts/setup/bootstrap.mjs",
+    "dev": "pnpm --filter @researchai/desktop dev",
+    "dev:engine": "node scripts/dev/with-engine.mjs",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "desktop:dev": "pnpm --filter @researchai/desktop tauri dev",
+    "desktop:build": "pnpm --filter @researchai/desktop tauri build",
+    "engine:test": "cd services/document-engine && uv run pytest",
+    "engine:run": "cd services/document-engine && uv run uvicorn researchai_document_engine.app:app --host 127.0.0.1 --port 8737"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

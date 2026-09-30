@@ -1,0 +1,38 @@
+# Node
+node_modules/
+dist/
+coverage/
+*.log
+
+# Generated dev-only preview artefact
+apps/desktop/preview.html
+
+# Rust / Tauri
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+
+# Local application data (never commit research data)
+ResearchAIData/
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Model artefacts are downloaded, never committed
+data/models/*
+!data/models/README.md
+data/cache/*
+!data/cache/README.md
+
+# Environment & OS
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
