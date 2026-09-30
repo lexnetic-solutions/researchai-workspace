@@ -55,6 +55,7 @@ by copying source trees into this repository.
 |---|---|---|---|
 | Docling | Document parsing/OCR sidecar | MIT | github.com/docling-project/docling |
 | llama.cpp | Local LLM inference | MIT | GGUF models have their own licenses |
+| reportlab | PDF export rendering (document engine) | BSD-3-Clause | Permissive; no copyleft obligations |
 | whisper.cpp | Speech-to-text | MIT | Model weights (OpenAI) — MIT license; verify redistribution terms |
 | sqlite-vec | Vector search in SQLite | MIT OR Apache-2.0 | pre-v1 — isolated behind VectorStore interface (see Rust table for current usage) |
 | sentence-transformers | Local embeddings | Apache-2.0 | Model weights have separate licenses |

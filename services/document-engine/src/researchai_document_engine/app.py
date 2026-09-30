@@ -14,13 +14,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__, parsers
 from . import embeddings as embeddings_module
+from . import exports as exports_module
 from .contracts import HealthResponse, ParseRequest, ParseResponse
 from .embeddings import EmbeddingRequest, EmbeddingResponse, EmbeddingStatusResponse
+from .exports import ExportRequest
 
 app = FastAPI(
     title="ResearchAI Document Engine",
@@ -79,3 +81,25 @@ def parse(request: ParseRequest) -> ParseResponse:
     if parser is None:
         return parsers.not_implemented(request.document_id, ext)
     return parser(request.managed_path)
+
+
+@app.post("/export/docx")
+def export_docx(request: ExportRequest) -> Response:
+    """Render a neutral block list to DOCX (python-docx)."""
+    data = exports_module.render_docx(request)
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": 'attachment; filename="export.docx"'},
+    )
+
+
+@app.post("/export/pdf")
+def export_pdf(request: ExportRequest) -> Response:
+    """Render a neutral block list to PDF (reportlab)."""
+    data = exports_module.render_pdf(request)
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="export.pdf"'},
+    )
