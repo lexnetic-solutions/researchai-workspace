@@ -19,10 +19,5 @@
     "desktop:build": "pnpm --filter @researchai/desktop tauri build",
     "engine:test": "cd services/document-engine && uv run pytest",
     "engine:run": "cd services/document-engine && uv run uvicorn researchai_document_engine.app:app --host 127.0.0.1 --port 8737"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   }
 }
