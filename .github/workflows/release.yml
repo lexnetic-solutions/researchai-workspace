@@ -1,0 +1,113 @@
+name: Release
+
+# Phase 9 (spec §37/§48): tag-triggered installer builds. Builds the frozen
+# document-engine sidecar per OS (PyInstaller), then the Tauri bundle, and
+# attaches DMG/APP/NSIS artefacts to the GitHub release. macOS signing is
+# enabled by repository secrets; without them builds are ad-hoc signed.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bundles:
+    name: Installers · ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14 # Apple Silicon
+            target: aarch64-apple-darwin
+          - os: macos-13 # Intel
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.12'
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - run: pnpm install --frozen-lockfile=false
+
+      - name: Freeze document engine (PyInstaller)
+        working-directory: services/document-engine
+        run: |
+          uv sync --group build
+          uv run pyinstaller packaging/pyinstaller.spec --noconfirm
+
+      - name: Collect sidecar into Tauri resources
+        env:
+          RESEARCHAI_SIDECAR_MODE: binary
+        run: node scripts/package/collect-sidecar.mjs
+
+      - name: Build frontend
+        run: pnpm --filter @researchai/desktop build
+
+      # macOS signing: ad-hoc when secrets are absent (Gatekeeper bypass is
+      # documented in PACKAGING.md).
+      - name: Import macOS signing certificate
+        if: runner.os == 'Macos' && env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "Importing Developer ID certificate into a temporary keychain"
+          CERT_FILE=$(mktemp /tmp/certificate.XXXXXX.p12)
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_FILE"
+          KEYCHAIN_FILE=$(mktemp /tmp/keychain.XXXXXX.keychain-db)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_FILE"
+          security default-keychain -s "$KEYCHAIN_FILE"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_FILE"
+          security import "$CERT_FILE" -k "$KEYCHAIN_FILE" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_FILE"
+          rm -f "$CERT_FILE"
+
+      - name: Build installers
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm --filter @researchai/desktop exec tauri build --target ${{ matrix.target }}
+
+      - name: Upload artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: researchai-${{ matrix.target }}
+          path: |
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+
+      - name: Attach to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
