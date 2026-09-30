@@ -9,6 +9,9 @@ on:
   push:
     tags: ['v*']
 
+# A dry-run rehearsal of this pipeline (no release attach, empty
+# permissions) lives in release-dry-run.yml — run it when touching the
+# packaging inputs before spending a real tag.
 permissions:
   contents: write
 

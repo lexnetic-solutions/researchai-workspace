@@ -53,6 +53,11 @@ Artefacts land in `apps/desktop/src-tauri/target/release/bundle/`.
 1. Version bump + tag `v*` → `release.yml` builds sidecar + app for macOS
    (arm64/x64) and Windows (x64), then attaches artefacts to the GitHub
    release (Linux dev builds remain supported via `ci.yml`).
+   Before spending a real tag, rehearse the pipeline with the manual
+   **Release dry-run** workflow (`.github/workflows/release-dry-run.yml`):
+   Actions → Release dry-run → Run workflow. It builds the same three-OS
+   matrix with ad-hoc signing, verifies the bundles + sidecar shipped, and
+   uploads artefacts only — it cannot publish (`permissions: {}`).
 2. macOS signing/notarization: set `APPLE_CERTIFICATE` secrets; without
    them the build is ad-hoc signed (Gatekeeper: right-click → Open).
 3. First-run: the Home **Setup checklist** probes engine, local AI, speech

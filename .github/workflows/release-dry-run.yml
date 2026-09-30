@@ -1,0 +1,152 @@
+name: Release dry-run
+
+# Rehearses release.yml end-to-end WITHOUT publishing:
+#   - triggered manually (Actions → Release dry-run → Run workflow) or when
+#     release tooling changes (paths filter below);
+#   - identical pipeline: PyInstaller sidecar freeze → sidecar collect →
+#     frontend build → tauri bundle, on the same three-OS matrix;
+#   - always ad-hoc signed: no signing secrets are passed and the signing
+#     import step from release.yml is deliberately absent;
+#   - the workflow token is read-only (contents: read), so it cannot create
+#     a release even in principle — output is artefacts only.
+#
+# A green run here means a real `v*` tag will produce installers.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/workflows/release-dry-run.yml'
+      - 'scripts/package/collect-sidecar.mjs'
+      - 'services/document-engine/packaging/pyinstaller.spec'
+      - 'services/document-engine/src/researchai_document_engine/run.py'
+      - 'apps/desktop/src-tauri/tauri.conf.json'
+
+# Read-only token: release-attach needs contents:write, which is not
+# granted — publishing is structurally impossible in this workflow.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-dry-run-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bundles:
+    name: Dry-run · ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14 # Apple Silicon
+            target: aarch64-apple-darwin
+          - os: macos-13 # Intel
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.12'
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - run: pnpm install --frozen-lockfile=false
+
+      - name: Freeze document engine (PyInstaller)
+        working-directory: services/document-engine
+        run: |
+          uv sync --group build
+          uv run pyinstaller packaging/pyinstaller.spec --noconfirm
+
+      - name: Collect sidecar into Tauri resources
+        env:
+          RESEARCHAI_SIDECAR_MODE: binary
+        run: node scripts/package/collect-sidecar.mjs
+
+      - name: Build frontend
+        run: pnpm --filter @researchai/desktop build
+
+      - name: Build installers (ad-hoc signed, dry-run)
+        run: pnpm --filter @researchai/desktop exec tauri build --target ${{ matrix.target }}
+
+      - name: Verify bundles produced
+        shell: bash
+        run: |
+          set -e
+          BUNDLE_DIR="apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
+          echo "Contents of $BUNDLE_DIR:"
+          find "$BUNDLE_DIR" -type f | head -40
+          case '${{ matrix.target }}' in
+            *apple*)
+              test -n "$(find "$BUNDLE_DIR" -name '*.dmg' -type f -print -quit)" || {
+                echo "::error::no .dmg produced"; exit 1; }
+              test -n "$(find "$BUNDLE_DIR" -name '*.app' -type d -print -quit)" || {
+                echo "::error::no .app produced"; exit 1; }
+              ;;
+            *windows*)
+              test -n "$(find "$BUNDLE_DIR" -name '*.exe' -type f -print -quit)" || {
+                echo "::error::no .exe produced"; exit 1; }
+              ;;
+          esac
+          echo "Bundle check passed for ${{ matrix.target }}"
+
+      - name: Verify sidecar shipped inside the bundle
+        shell: bash
+        run: |
+          set -e
+          # Phase 9 contract: the frozen engine must ride along. On macOS we
+          # can check the .app directly; NSIS compresses its payload into the
+          # installer, so there we assert the collect step's output — the
+          # exact directory bundle.resources packs — is present and non-empty.
+          if [ '${{ runner.os }}' = 'Windows' ]; then
+            test -n "$(find apps/desktop/src-tauri/packaging/resources/sidecar -type f -name '*.exe' -print -quit)" || {
+              echo "::error::sidecar binary missing from packaging/resources/sidecar"; exit 1; }
+          else
+            BASE=$(find apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle -maxdepth 3 -type d -name 'ResearchAI Workspace.app' -print -quit)
+            test -n "$BASE" || { echo "::error::.app bundle not found"; exit 1; }
+            test -n "$(find "$BASE/Contents/Resources" -path '*sidecar*' -type f -print -quit)" || {
+              echo "::error::sidecar missing from .app Resources"; exit 1; }
+          fi
+          echo "Sidecar presence check passed for ${{ matrix.target }}"
+
+      - name: Upload artefacts (dry-run only)
+        uses: actions/upload-artifact@v4
+        with:
+          name: researchai-dry-run-${{ matrix.target }}
+          path: |
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+          retention-days: 7
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Release dry-run — ${{ matrix.os }} (${{ matrix.target }})"
+            echo ""
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| Installers built | ${{ job.status == 'success' && '✅' || '❌' }} |"
+            echo "| Sidecar shipped | see 'Verify sidecar shipped inside the bundle' step |"
+            echo "| Published to a GitHub release | **never** (read-only token) |"
+          } >> "$GITHUB_STEP_SUMMARY"
