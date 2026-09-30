@@ -245,6 +245,50 @@ fn kill_pid(pid: u32) {
 // Tests
 // ---------------------------------------------------------------------------
 
+// Sidecar discovery is a pure path probe — test it on every platform (CI
+// runs these on Windows too); only process-spawning behaviour needs unix.
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+    use crate::db::tests::TempDir;
+
+    #[test]
+    fn finds_sidecar_binary_in_resources() {
+        let dir = TempDir::new_with_label("eng");
+        let sidecar_dir = dir.path().join(SIDECAR_DIR_NAME);
+        std::fs::create_dir_all(&sidecar_dir).unwrap();
+        std::fs::write(sidecar_dir.join("engine.env"), b"# c\nFOO=1\n").unwrap();
+        // Windows releases ship researchai-engine.exe; test that name too
+        // where it can actually be produced.
+        #[cfg(windows)]
+        let binary = sidecar_dir.join("researchai-engine.exe");
+        #[cfg(not(windows))]
+        let binary = sidecar_dir.join("researchai-engine-macos");
+        std::fs::write(&binary, b"bin").unwrap();
+
+        let found = find_sidecar_binary(dir.path()).expect("binary found");
+        assert!(found
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("researchai-engine"));
+    }
+
+    #[test]
+    fn falls_back_to_packaging_prefix_layout() {
+        let dir = TempDir::new_with_label("eng2");
+        let nested = dir
+            .path()
+            .join("packaging")
+            .join("resources")
+            .join(SIDECAR_DIR_NAME);
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("researchai-engine"), b"bin").unwrap();
+        let found = find_sidecar_binary(dir.path()).expect("binary found");
+        assert!(found.to_string_lossy().contains("sidecar"));
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -260,22 +304,6 @@ mod tests {
         // never report Bundled without a bundled sidecar.
         assert!(!matches!(rt.mode(), EngineMode::Bundled));
         assert!(rt.child_pid().is_none());
-    }
-
-    #[test]
-    fn finds_sidecar_binary_in_resources() {
-        let dir = TempDir::new_with_label("eng");
-        let sidecar_dir = dir.path().join(SIDECAR_DIR_NAME);
-        std::fs::create_dir_all(&sidecar_dir).unwrap();
-        std::fs::write(sidecar_dir.join("engine.env"), b"# c\nFOO=1\n").unwrap();
-        std::fs::write(sidecar_dir.join("researchai-engine-macos"), b"bin").unwrap();
-
-        let found = find_sidecar_binary(dir.path()).expect("binary found");
-        assert!(found
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .starts_with("researchai-engine"));
     }
 
     #[test]

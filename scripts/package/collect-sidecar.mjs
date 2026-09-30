@@ -77,8 +77,10 @@ if (mode !== 'fallback' && mode !== 'skip') {
   }
 }
 
-// 2) Fallback launcher: dev machine with `uv` on PATH.
-if (mode !== 'skip') {
+// 2) Fallback launcher: dev machine with `uv` on PATH. Unix only — a
+// `#!/bin/sh` script cannot be executed as a sidecar on Windows, so there
+// dev builds simply run with an externally started engine.
+if (mode !== 'skip' && process.platform !== 'win32') {
   const uv = sh('command -v uv');
   if (uv.status === 0) {
     const dest = join(outDir, 'researchai-engine');

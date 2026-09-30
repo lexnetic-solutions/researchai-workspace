@@ -7,7 +7,7 @@
 | macOS Apple Silicon | `ResearchAI-macOS-arm64.dmg` (+ `.app`) |
 | macOS Intel | `ResearchAI-macOS-x64.dmg` |
 | Windows x64 | `ResearchAI-Windows-x64.exe` (NSIS) + portable `.zip` |
-| Linux x64 | `ResearchAI-Linux-x64.AppImage` (+ `.deb`) |
+| Linux x64 | `ResearchAI-Linux-x64.AppImage` (+ `.deb`) — AppImage bundles its libraries; the `.deb` expects the usual desktop runtime (webkit2gtk 4.1 etc.) on glibc ≥ 2.38 (Ubuntu 24.04+) |
 
 One source tree; per-OS builds in CI — binaries are never cross-compiled
 between desktop OSes (spec §38).
