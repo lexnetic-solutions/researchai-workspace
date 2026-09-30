@@ -13,7 +13,7 @@
 //   RESEARCHAI_SIDECAR_MODE=binary|fallback|skip node …
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -28,7 +28,7 @@ const mode = (process.env.RESEARCHAI_SIDECAR_MODE ?? 'auto').toLowerCase();
 mkdirSync(outDir, { recursive: true });
 
 // Clean previous artefacts (keep engine.env if the operator wrote one).
-for (const f of ['researchai-engine', 'researchai-engine-macos', 'researchai-engine-linux', 'researchai-engine-win.exe']) {
+for (const f of ['researchai-engine', 'researchai-engine.exe', 'researchai-engine-macos', 'researchai-engine-linux', 'researchai-engine-win.exe']) {
   rmSync(join(outDir, f), { force: true });
 }
 
@@ -36,17 +36,34 @@ function sh(cmd, cwd) {
   return spawnSync(cmd, { shell: true, cwd, encoding: 'utf8' });
 }
 
-// 1) Frozen binary? (CI builds it with PyInstaller before calling this)
+// 1) Frozen binary? (CI builds it with PyInstaller before calling this).
+// The spec produces the single-directory layout dist/researchai-engine/ with
+// the entry binary inside (researchai-engine, or .exe on Windows). Only
+// regular files qualify — on Windows the bare dist/researchai-engine path
+// is the COLLECT directory and copyFileSync on it fails with EPERM.
+const isFile = (p) => {
+  try {
+    return statSync(p).isFile();
+  } catch {
+    return false;
+  }
+};
 const binarySources = [
   join(engineDir, 'dist/researchai-engine/researchai-engine'),
+  join(engineDir, 'dist/researchai-engine/researchai-engine.exe'),
   join(engineDir, 'dist/researchai-engine-macos'),
-  join(engineDir, 'dist/researchai-engine'),
+  join(engineDir, 'dist/researchai-engine-linux'),
 ];
 if (mode !== 'fallback' && mode !== 'skip') {
-  const src = binarySources.find(existsSync);
+  const src = binarySources.find(isFile);
   if (src) {
-    const dest = join(outDir, 'researchai-engine');
+    // Windows cannot execute an extensionless file: keep the .exe suffix.
+    const dest = join(
+      outDir,
+      process.platform === 'win32' ? 'researchai-engine.exe' : 'researchai-engine',
+    );
     copyFileSync(src, dest);
+    chmodSync(dest, 0o755);
     console.log(`[collect-sidecar] bundled frozen binary: ${src}`);
     writeEnv();
     process.exit(0);
