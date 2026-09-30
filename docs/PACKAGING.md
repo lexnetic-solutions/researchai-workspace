@@ -51,8 +51,9 @@ Artefacts land in `apps/desktop/src-tauri/target/release/bundle/`.
 ## Release checklist (Phase 9)
 
 1. Version bump + tag `v*` → `release.yml` builds sidecar + app for macOS
-   (arm64/x64) and Windows (x64), then attaches artefacts to the GitHub
-   release (Linux dev builds remain supported via `ci.yml`).
+   (arm64/x64), Windows (x64) and Linux (x64: AppImage + deb), then attaches
+   artefacts to the GitHub release (Linux dev builds remain supported via
+   `ci.yml`).
    Before spending a real tag, rehearse the pipeline with the manual
    **Release dry-run** workflow (`.github/workflows/release-dry-run.yml`):
    Actions → Release dry-run → Run workflow. It builds the same three-OS

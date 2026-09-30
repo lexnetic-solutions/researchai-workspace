@@ -4,7 +4,8 @@ name: Release dry-run
 #   - triggered manually (Actions → Release dry-run → Run workflow) or when
 #     release tooling changes (paths filter below);
 #   - identical pipeline: PyInstaller sidecar freeze → sidecar collect →
-#     frontend build → tauri bundle, on the same three-OS matrix;
+#     frontend build → tauri bundle, on the same four-target matrix
+#     (macOS arm64/x64, Windows x64, Linux x64);
 #   - always ad-hoc signed: no signing secrets are passed and the signing
 #     import step from release.yml is deliberately absent;
 #   - the workflow token is read-only (contents: read), so it cannot create
@@ -45,9 +46,18 @@ jobs:
             target: x86_64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies (Tauri)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
       - uses: pnpm/action-setup@v4
         with:
@@ -105,6 +115,12 @@ jobs:
               test -n "$(find "$BUNDLE_DIR" -name '*.exe' -type f -print -quit)" || {
                 echo "::error::no .exe produced"; exit 1; }
               ;;
+            *linux*)
+              test -n "$(find "$BUNDLE_DIR" -name '*.AppImage' -type f -print -quit)" || {
+                echo "::error::no .AppImage produced"; exit 1; }
+              test -n "$(find "$BUNDLE_DIR" -name '*.deb' -type f -print -quit)" || {
+                echo "::error::no .deb produced"; exit 1; }
+              ;;
           esac
           echo "Bundle check passed for ${{ matrix.target }}"
 
@@ -118,6 +134,11 @@ jobs:
           # exact directory bundle.resources packs — is present and non-empty.
           if [ '${{ runner.os }}' = 'Windows' ]; then
             test -n "$(find apps/desktop/src-tauri/packaging/resources/sidecar -type f -name '*.exe' -print -quit)" || {
+              echo "::error::sidecar binary missing from packaging/resources/sidecar"; exit 1; }
+          elif [ '${{ runner.os }}' = 'Linux' ]; then
+            # AppImage/deb also compress payloads; assert the collect step's
+            # output (the exact directory bundle.resources packs).
+            test -n "$(find apps/desktop/src-tauri/packaging/resources/sidecar -type f -name 'researchai-engine*' -print -quit)" || {
               echo "::error::sidecar binary missing from packaging/resources/sidecar"; exit 1; }
           else
             BASE=$(find apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle -maxdepth 3 -type d -name 'ResearchAI Workspace.app' -print -quit)
@@ -135,6 +156,8 @@ jobs:
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
           retention-days: 7
 
       - name: Summary

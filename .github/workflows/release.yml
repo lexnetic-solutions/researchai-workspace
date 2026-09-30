@@ -2,8 +2,9 @@ name: Release
 
 # Phase 9 (spec §37/§48): tag-triggered installer builds. Builds the frozen
 # document-engine sidecar per OS (PyInstaller), then the Tauri bundle, and
-# attaches DMG/APP/NSIS artefacts to the GitHub release. macOS signing is
-# enabled by repository secrets; without them builds are ad-hoc signed.
+# attaches DMG/APP/NSIS/AppImage/deb artefacts to the GitHub release. macOS
+# signing is enabled by repository secrets; without them builds are ad-hoc
+# signed.
 
 on:
   push:
@@ -32,9 +33,18 @@ jobs:
             target: x86_64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies (Tauri)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
       - uses: pnpm/action-setup@v4
         with:
@@ -107,6 +117,8 @@ jobs:
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
 
       - name: Attach to GitHub release
         uses: softprops/action-gh-release@v2
@@ -114,3 +126,5 @@ jobs:
           files: |
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
