@@ -6,6 +6,7 @@ import type {
   ExportFile,
   ExportFormat,
   ExportKind,
+  ExportStats,
 } from '@researchai/shared-types';
 import { backend } from '../backend/client';
 import { EmptyState } from '../components/EmptyState';
@@ -35,6 +36,7 @@ export function ExportsView() {
   const [sourceId, setSourceId] = useState<string>('');
   const [exporting, setExporting] = useState(false);
   const [files, setFiles] = useState<ExportFile[]>([]);
+  const [stats, setStats] = useState<ExportStats | null>(null);
 
   const reloadSources = useCallback(async () => {
     if (!activeProject) return;
@@ -55,6 +57,11 @@ export function ExportsView() {
       setFiles(await backend.listExports());
     } catch {
       setFiles([]);
+    }
+    try {
+      setStats(await backend.exportsStats());
+    } catch {
+      setStats(null);
     }
   }, []);
 
@@ -97,6 +104,17 @@ export function ExportsView() {
       if (!native) {
         pushToast('info', 'Reveal opens the OS file manager in the desktop app.');
       }
+    } catch (err) {
+      pushToast('error', err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function removeExport(path: string, name: string) {
+    try {
+      const next = await backend.deleteExport(path);
+      setStats(next);
+      await reloadFiles();
+      pushToast('success', `Deleted ${name}.`);
     } catch (err) {
       pushToast('error', err instanceof Error ? err.message : String(err));
     }
@@ -214,6 +232,13 @@ export function ExportsView() {
 
       <div className="card">
         <h2>Exported files</h2>
+        {stats && (
+          <p className="tiny muted">
+            {stats.files} file{stats.files === 1 ? '' : 's'} ·{' '}
+            {formatBytes(stats.totalBytes)} in the managed exports folder. Deleting here removes
+            the file from disk.
+          </p>
+        )}
         {files.length === 0 ? (
           <p className="tiny muted">Nothing exported yet.</p>
         ) : (
@@ -228,6 +253,14 @@ export function ExportsView() {
                 >
                   <span className="history-question">{f.name}</span>
                   <span className="tiny muted">{formatBytes(f.sizeBytes)}</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost tiny-btn"
+                  aria-label={`Delete ${f.name}`}
+                  onClick={() => void removeExport(f.path, f.name)}
+                >
+                  Delete
                 </button>
               </li>
             ))}

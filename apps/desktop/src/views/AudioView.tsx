@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import type { DocumentSummary, NarrationKind, NarrationResult, SttStatus, TtsStatus } from '@researchai/shared-types';
 import { backend } from '../backend/client';
 import { EmptyState } from '../components/EmptyState';
@@ -348,29 +349,39 @@ export function AudioView() {
           Read-aloud reads the document's own words — no AI needed. Summaries and the podcast
           segment are written by your local model, then spoken by Piper (or the macOS voice).
           Files land in the exports folder.
-        </p>
-
-        {narration && (
-          <div className="transcript-result" style={{ marginTop: '0.75rem' }}>
-            <div className="field-row">
-              <span className="chip status-ready">{narration.format.toUpperCase()}</span>
-              <span className="tiny muted">
-                {mmss(narration.durationMs)} · {narration.words.toLocaleString()} words ·{' '}
-                {formatBytes(narration.bytes)} · {narration.engine}
-              </span>
-            </div>
-            <div className="field-row" style={{ marginTop: '0.5rem' }}>
-              <button
-                type="button"
-                className="btn ghost"
-                onClick={() => void revealAudio(narration.audioPath)}
-                title={narration.audioPath}
-              >
-                Reveal in Finder
-              </button>
-            </div>
-          </div>
-        )}
+        </p>            {narration && (
+              <div className="transcript-result" style={{ marginTop: '0.75rem' }}>
+                <div className="field-row">
+                  <span className="chip status-ready">{narration.format.toUpperCase()}</span>
+                  <span className="tiny muted">
+                    {mmss(narration.durationMs)} · {narration.words.toLocaleString()} words ·{' '}
+                    {formatBytes(narration.bytes)} · {narration.engine}
+                  </span>
+                </div>
+                {native ? (
+                  <audio
+                    className="audio-player"
+                    controls
+                    preload="metadata"
+                    src={convertFileSrc(narration.audioPath)}
+                  />
+                ) : (
+                  <p className="tiny muted" style={{ marginTop: '0.5rem' }}>
+                    In-app playback is available in the desktop app.
+                  </p>
+                )}
+                <div className="field-row" style={{ marginTop: '0.5rem' }}>
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    onClick={() => void revealAudio(narration.audioPath)}
+                    title={narration.audioPath}
+                  >
+                    Reveal in Finder
+                  </button>
+                </div>
+              </div>
+            )}
       </div>
 
       <div className="two-col">

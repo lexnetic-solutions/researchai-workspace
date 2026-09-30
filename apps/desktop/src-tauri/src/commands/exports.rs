@@ -135,6 +135,100 @@ pub fn list_exports(state: State<'_, AppState>) -> AppResult<Vec<ExportFileDto>>
     Ok(files)
 }
 
+/// Aggregate size of the exports directory (storage sweep, Phase 6 note).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportStatsDto {
+    pub files: u64,
+    pub total_bytes: u64,
+}
+
+#[tauri::command]
+pub fn exports_stats(state: State<'_, AppState>) -> AppResult<ExportStatsDto> {
+    let svc = ExportService::new(&state.data_dir);
+    let dir = svc.exports_dir().to_path_buf();
+    let mut stats = ExportStatsDto {
+        files: 0,
+        total_bytes: 0,
+    };
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                stats.files += 1;
+                stats.total_bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
+            }
+        }
+    }
+    Ok(stats)
+}
+
+/// Delete one export file. Refuses anything outside the managed exports
+/// directory (spec §13: managed storage is the only writable area).
+#[tauri::command]
+pub fn delete_export(state: State<'_, AppState>, path: String) -> AppResult<ExportStatsDto> {
+    let svc = ExportService::new(&state.data_dir);
+    let dir = svc.exports_dir().to_path_buf();
+
+    let target = std::path::Path::new(&path);
+    if !target.is_file() {
+        return Err(AppError::msg("The export file no longer exists."));
+    }
+    // Canonicalise both sides so `../` escapes cannot pass the prefix check.
+    let dir_canon = dir.canonicalize()?;
+    let target_canon = target.canonicalize()?;
+    if !target_canon.starts_with(&dir_canon) {
+        return Err(AppError::msg(
+            "Refusing to delete: the file is not inside the managed exports directory.",
+        ));
+    }
+
+    std::fs::remove_file(target_canon)?;
+    exports_stats(state)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use crate::db::tests::TempDir;
+    use std::path::Path;
+
+    /// The delete command's core is the path-containment check; exercise it
+    /// against a real temp dir with an outside file and an inside file.
+    #[test]
+    fn delete_refuses_paths_outside_exports_dir() {
+        let dir = TempDir::new_with_label("exp-del");
+        let exports = dir.path().join("exports");
+        std::fs::create_dir_all(&exports).unwrap();
+        let inside = exports.join("report.md");
+        std::fs::write(&inside, b"x").unwrap();
+        let outside = dir.path().join("precious.db");
+        std::fs::write(&outside, b"keep me").unwrap();
+
+        let dir_canon = exports.canonicalize().unwrap();
+        // The command's guard, extracted: outside → refused, inside → allowed.
+        let outside_allowed = outside
+            .canonicalize()
+            .map(|p| p.starts_with(&dir_canon))
+            .unwrap_or(false);
+        assert!(!outside_allowed);
+
+        // Same logic for a traversal-looking path that resolves outside.
+        let sneaky = exports.join("../precious.db");
+        let sneaky_allowed = sneaky
+            .canonicalize()
+            .map(|p| p.starts_with(&dir_canon))
+            .unwrap_or(false);
+        assert!(!sneaky_allowed);
+
+        let inside_allowed = inside
+            .canonicalize()
+            .map(|p| p.starts_with(&dir_canon))
+            .unwrap_or(true);
+        assert!(inside_allowed);
+        assert!(Path::new(&inside).is_file());
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportFileDto {

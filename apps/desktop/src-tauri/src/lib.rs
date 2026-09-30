@@ -70,6 +70,8 @@ pub fn run() {
             commands::exports::export_bibliography,
             commands::exports::reveal_path,
             commands::exports::list_exports,
+            commands::exports::exports_stats,
+            commands::exports::delete_export,
             commands::stt::stt_check,
             commands::stt::stt_get_settings,
             commands::stt::stt_save_settings,

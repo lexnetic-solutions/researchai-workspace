@@ -140,6 +140,12 @@ export interface ExportFile {
   readonly sizeBytes: number;
 }
 
+/** Aggregate size of the managed exports directory. */
+export interface ExportStats {
+  readonly files: number;
+  readonly totalBytes: number;
+}
+
 /** Result of an import batch (per-file errors are isolated, spec §42). */
 export interface ImportSummary {
   readonly imported: number;

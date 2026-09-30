@@ -763,4 +763,17 @@ mod tests {
             sorted(&["binaryFound", "modelFound", "ready", "outputDir"])
         );
     }
+
+    // -- Post-plan polish: exports storage sweep --------------------------------
+
+    use researchai_lib::commands::exports::ExportStatsDto;
+
+    #[test]
+    fn export_stats_keys() {
+        let s = ExportStatsDto {
+            files: 3,
+            total_bytes: 12_345,
+        };
+        assert_eq!(keys(&s), sorted(&["files", "totalBytes"]));
+    }
 }

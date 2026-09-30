@@ -20,6 +20,7 @@ import type {
   ExportKind,
   ExportKindCapability,
   ExportResult,
+  ExportStats,
   FormattedReference,
   ImportMode,
   ImportSummary,
@@ -123,6 +124,8 @@ export const backend = {
   exportBibliography: (projectId: string, format: 'bibtex' | 'ris') =>
     invoke<ExportResult>('export_bibliography', { projectId, format }),
   listExports: () => invoke<ExportFile[]>('list_exports'),
+  exportsStats: () => invoke<ExportStats>('exports_stats'),
+  deleteExport: (path: string) => invoke<ExportStats>('delete_export', { path }),
   revealPath: (path: string) => invoke<string>('reveal_path', { path }),
 
   searchLibrary: (query: string, documentIds: string[] = [], limit = 12) =>
@@ -902,6 +905,21 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
     }
     case 'list_exports':
       return clone(MOCK_EXPORTS) as T;
+    case 'exports_stats':
+      return {
+        files: MOCK_EXPORTS.length,
+        totalBytes: MOCK_EXPORTS.reduce((sum, f) => sum + f.sizeBytes, 0),
+      } as T;
+    case 'delete_export': {
+      const p = String(args?.['path'] ?? '');
+      const idx = MOCK_EXPORTS.findIndex((f) => f.path === p);
+      if (idx < 0) throw new Error('The export file no longer exists.');
+      MOCK_EXPORTS.splice(idx, 1);
+      return {
+        files: MOCK_EXPORTS.length,
+        totalBytes: MOCK_EXPORTS.reduce((sum, f) => sum + f.sizeBytes, 0),
+      } as T;
+    }
     case 'reveal_path':
       return String(args?.['path'] ?? '') as T;
     // -- Speech-to-text (Phase 7) ---------------------------------------------

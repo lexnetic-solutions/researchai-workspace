@@ -722,7 +722,23 @@ final phase of the master build plan.
 
 ### Next
 
-The master build plan is complete (Phases 0–9). Natural follow-ups beyond
-the plan: signed/notarized notarized release pipeline with real certificates,
-chunked TTS synthesis, in-app audio playback via the asset protocol, and a
-storage-manager sweep for exports growth (Phase 6 note).
+The master build plan is complete (Phases 0–9). Post-plan polish shipped
+immediately after (see below); remaining follow-ups: signed/notarized release
+pipeline with real certificates and chunked TTS synthesis.
+
+## Post-plan polish — playback & storage sweep
+
+- **In-app audio playback**: the Tauri asset protocol is enabled (with the
+  matching `protocol-asset` Cargo feature) scoped to the managed audio
+  folders (`$APPDATA/exports/*` and `$APPDATA/transcribe/*`) and the CSP
+  gained `media-src asset:`. Narration results now render an inline
+  `<audio>` player in the Audio tab (native builds; preview keeps the
+  explanatory note), alongside Reveal.
+- **Exports storage sweep** (Phase 6 trade-off resolved): `exports_stats`
+  reports file count + total bytes; `delete_export` removes one file with a
+  canonicalised containment check (refuses anything resolving outside the
+  managed exports directory, `../` included). ExportsView shows the folder
+  total and per-file Delete; new contract lock pins the wire shape.
+- Verification: cargo battery green (93 lib + 20 locks + 1 E2E), engine
+  untouched, tsc/build clean, and a full `tauri build` re-run produced the
+  updated .app (9.93 MiB) + DMG (4.70 MiB) with the playback entitlements.
