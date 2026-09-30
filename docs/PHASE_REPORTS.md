@@ -723,8 +723,8 @@ final phase of the master build plan.
 ### Next
 
 The master build plan is complete (Phases 0–9). Post-plan polish shipped
-immediately after (see below); remaining follow-ups: signed/notarized release
-pipeline with real certificates and chunked TTS synthesis.
+immediately after (see below), followed by chunked TTS synthesis; remaining
+follow-up: signed/notarized release pipeline with real certificates.
 
 ## Post-plan polish — playback & storage sweep
 
@@ -742,3 +742,28 @@ pipeline with real certificates and chunked TTS synthesis.
 - Verification: cargo battery green (93 lib + 20 locks + 1 E2E), engine
   untouched, tsc/build clean, and a full `tauri build` re-run produced the
   updated .app (9.93 MiB) + DMG (4.70 MiB) with the playback entitlements.
+
+## Post-plan polish — chunked TTS synthesis
+
+Long narrations (full-document read-aloud, 20-minute summaries) no longer run
+through one giant synthesizer invocation. [tts.rs](../apps/desktop/src-tauri/src/services/tts.rs)
+now packs scripts into sentence-boundary chunks of at most 220 words and
+renders each chunk through its own one-shot piper/`say` process, then joins
+the part WAVs into a single exact-size RIFF file (`concat_wavs`: header
+walked strictly, sizes rewritten as true u32s, part headers stripped, partial
+PCM frames refused). One MP3 transcode happens for the whole narration when
+enabled — never per part. Short scripts keep the single-invocation fast path.
+
+- Failure semantics: a chunk failure reports position ("Piper failed on
+  chunk 2 of 3"), successful part files are cleaned up, part files from the
+  failed run stay on disk for debugging, and the provider flags the chunked
+  failure (`is_chunk_error`) for future retry/UI work.
+- Durations are now exact for synthesized output: the RIFF header is parsed
+  (data-chunk bytes ÷ byte rate) instead of estimating from file size; the
+  size-based estimate remains the fallback. `say --data-format=LEF32` writes
+  IEEE-float WAVs, so the parser accepts format tags 1 (PCM) and 3 (float).
+- Tests: 6 new (chunker packing/losslessness, multi-chunk join with part
+  cleanup, mid-run failure position + flag, exact 24 kHz concat header,
+  non-strict-header fallback); existing tests now assert header-exact
+  durations. Battery: 98 lib + 20 contract locks + 1 live E2E, 0 warnings;
+  engine untouched; tsc/build clean.
