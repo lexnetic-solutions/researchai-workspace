@@ -349,6 +349,80 @@ pub async fn ai_ask(
     .map_err(|e| AppError::msg(format!("AI request failed to run: {e}")))?
 }
 
+/// Streaming ask: emits `ai://ask-delta` events with incremental answer
+/// text for live rendering, then returns the complete persisted response
+/// (identical to `ai_ask`). Frontend decides which path to call.
+#[tauri::command]
+pub async fn ai_ask_stream(
+    app: AppHandle,
+    project_id: String,
+    document_ids: Vec<String>,
+    mode: String,
+    question: String,
+) -> AppResult<AnalysisResponse> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+
+        // No-AI mode is a hard gate (spec §35).
+        if !state
+            .settings
+            .lock()
+            .expect("settings lock")
+            .ai_enabled
+        {
+            return Err(AppError::msg(
+                "AI is disabled (No-AI mode). Enable it in Settings to use Ask features.",
+            ));
+        }
+
+        let mode = AnalysisMode::from_str(&mode)?;
+        let ai = state.db.get_ai_settings()?;
+
+        let model = resolve_model(&state.db, &ai)?;
+        let binary = std::path::PathBuf::from(&ai.llama_server_path);
+        if !matches!(state.llm_runtime.snapshot().state, LoadState::Ready { .. }) {
+            state.llm_runtime.ensure_loaded(
+                &binary,
+                std::path::Path::new(&model.file_path),
+                &ai,
+                LOAD_DEADLINE,
+            )?;
+        }
+        state.llm_runtime.touch();
+        let snapshot = state.llm_runtime.snapshot();
+        let port = match snapshot.state {
+            LoadState::Ready { port } => port,
+            LoadState::Failed { detail } => return Err(AppError::msg(detail)),
+            _ => return Err(AppError::msg("The local model is not ready yet.")),
+        };
+
+        let provider = crate::services::ai::LlamaCppProvider::new(
+            &format!("http://127.0.0.1:{port}"),
+            &model.file_name,
+            None,
+        );
+
+        let req = analysis::AskRequest {
+            project_id: project_id.clone(),
+            document_ids: document_ids.clone(),
+            mode,
+            question: question.clone(),
+            max_evidence: 12,
+            model_id: Some(model.id.clone()),
+            max_tokens: ai.max_tokens,
+            temperature: ai.temperature,
+        };
+        analysis::ask_streaming(&state.db, &provider, &req, &mut |delta| {
+            let _ = app.emit(
+                "ai://ask-delta",
+                serde_json::json!({ "text": delta }),
+            );
+        })
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("AI request failed to run: {e}")))?
+}
+
 #[tauri::command]
 pub fn ai_list_analyses(
     state: State<'_, AppState>,

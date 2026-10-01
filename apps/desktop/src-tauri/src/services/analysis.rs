@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use crate::db::{AnalysisRow, Db};
 use crate::error::{AppError, AppResult};
-use crate::services::ai::{AiProvider, CompletionRequest};
+use crate::services::ai::{AiProvider, CompletionOutput, CompletionRequest};
 use crate::services::retrieval;
 
 /// Bump when prompt wording changes so old analyses stay interpretable.
@@ -144,9 +144,29 @@ pub struct AnalysisResponse {
 // Pipeline
 // ---------------------------------------------------------------------------
 
-/// Run one grounded ask. The provider is a parameter so tests (and future
-/// cloud providers) can inject any implementation.
-pub fn ask(db: &Db, provider: &dyn AiProvider, req: &AskRequest) -> AppResult<AnalysisResponse> {
+/// Everything needed to run the completion for one ask, prepared without
+/// touching the provider (retrieval + prompt assembly).
+pub(crate) struct PreparedAsk {
+    pub evidence: Vec<AnalysisEvidence>,
+    pub warnings: Vec<String>,
+    pub system_prompt: String,
+    pub user_prompt: String,
+}
+
+/// Outcome of ask preparation: either a ready-to-run completion, or an
+/// already-complete response (no evidence matched — nothing to generate).
+pub(crate) enum PreparedOutcome {
+    NoMatches(AnalysisResponse),
+    Ready(PreparedAsk),
+}
+
+/// Retrieval + prompt assembly shared by the blocking and streaming ask
+/// paths. `provider_name` only feeds the no-match trace's engine field.
+pub(crate) fn prepare_ask(
+    db: &Db,
+    provider_name: &str,
+    req: &AskRequest,
+) -> AppResult<PreparedOutcome> {
     let question = req.question.trim();
     if question.is_empty() {
         return Err(AppError::msg("The question must not be empty."));
@@ -163,7 +183,7 @@ pub fn ask(db: &Db, provider: &dyn AiProvider, req: &AskRequest) -> AppResult<An
         );
         let trace = AnalysisTrace {
             mode: req.mode.as_str().into(),
-            engine: provider.name().into(),
+            engine: provider_name.into(),
             model: None,
             scope_documents: req.document_ids.len(),
             evidence_count: 0,
@@ -176,30 +196,59 @@ pub fn ask(db: &Db, provider: &dyn AiProvider, req: &AskRequest) -> AppResult<An
             embedding_coverage: coverage(db)?,
             warnings,
         };
-        return Ok(AnalysisResponse {
+        return Ok(PreparedOutcome::NoMatches(AnalysisResponse {
             analysis_id: None,
             answer: "No indexed sources matched this question. Try Search to find the right "
                 .to_string()
                 + "documents, then ask again with a wider scope.",
             evidence: Vec::new(),
             trace,
-        });
+        }));
     }
 
     let max_evidence = req
         .max_evidence
         .clamp(1, 20)
         .min(evidence.len());
-    let evidence = &evidence[..max_evidence];
+    let evidence = evidence[..max_evidence].to_vec();
 
-    let (system_prompt, user_prompt) = build_prompt(req.mode, question, evidence);
-
-    let completion = provider.complete(&CompletionRequest {
+    let (system_prompt, user_prompt) = build_prompt(req.mode, question, &evidence);
+    Ok(PreparedOutcome::Ready(PreparedAsk {
+        evidence,
+        warnings,
         system_prompt,
         user_prompt,
-        max_tokens: req.max_tokens,
-        temperature: req.temperature,
-    })?;
+    }))
+}
+
+/// Trace + persistence shared by both ask paths, after the completion is in.
+pub(crate) fn finish_ask(
+    db: &Db,
+    req: &AskRequest,
+    evidence: &[AnalysisEvidence],
+    mut warnings: Vec<String>,
+    completion: CompletionOutput,
+) -> AppResult<AnalysisResponse> {
+    let question = req.question.trim();
+
+    // Prompt-cache telemetry (see build_prompt): repeated asks over the same
+    // evidence should show a much lower ms/token than the first ask, because
+    // the shared evidence prefix comes from llama-server's KV cache.
+    log::info!(
+        target: "researchai::ai",
+        "ask complete: mode={} evidence={} prompt_tokens={:?} completion_tokens={:?} duration_ms={} ms_per_token={:.1}",
+        req.mode.as_str(),
+        evidence.len(),
+        completion.prompt_tokens,
+        completion.completion_tokens,
+        completion.duration_ms,
+        if completion.completion_tokens.unwrap_or(0) > 0 {
+            completion.duration_ms as f64
+                / completion.completion_tokens.unwrap() as f64
+        } else {
+            0.0
+        },
+    );
 
     let citations_used = used_citations(&completion.text, evidence.len());
     if citations_used.is_empty() {
@@ -254,6 +303,52 @@ pub fn ask(db: &Db, provider: &dyn AiProvider, req: &AskRequest) -> AppResult<An
         evidence: evidence.to_vec(),
         trace,
     })
+}
+
+/// Run one grounded ask (blocking completion). The provider is a parameter so
+/// tests (and future cloud providers) can inject any implementation.
+pub fn ask(db: &Db, provider: &dyn AiProvider, req: &AskRequest) -> AppResult<AnalysisResponse> {
+    let prepared = match prepare_ask(db, provider.name(), req)? {
+        PreparedOutcome::NoMatches(resp) => return Ok(resp),
+        PreparedOutcome::Ready(p) => p,
+    };
+
+    let completion = provider.complete(&CompletionRequest {
+        system_prompt: prepared.system_prompt,
+        user_prompt: prepared.user_prompt,
+        max_tokens: req.max_tokens,
+        temperature: req.temperature,
+    })?;
+
+    finish_ask(db, req, &prepared.evidence, prepared.warnings, completion)
+}
+
+/// Streaming variant: `on_delta` receives incremental answer text as it is
+/// generated; the returned response is identical to [`ask`] (full text
+/// persisted, same trace). Nothing is persisted until the stream ends, so an
+/// interrupted stream leaves no partial analysis behind.
+pub fn ask_streaming(
+    db: &Db,
+    provider: &dyn AiProvider,
+    req: &AskRequest,
+    on_delta: &mut dyn FnMut(&str),
+) -> AppResult<AnalysisResponse> {
+    let prepared = match prepare_ask(db, provider.name(), req)? {
+        PreparedOutcome::NoMatches(resp) => return Ok(resp),
+        PreparedOutcome::Ready(p) => p,
+    };
+
+    let completion = provider.complete_stream(
+        &CompletionRequest {
+            system_prompt: prepared.system_prompt,
+            user_prompt: prepared.user_prompt,
+            max_tokens: req.max_tokens,
+            temperature: req.temperature,
+        },
+        on_delta,
+    )?;
+
+    finish_ask(db, req, &prepared.evidence, prepared.warnings, completion)
 }
 
 // ---------------------------------------------------------------------------

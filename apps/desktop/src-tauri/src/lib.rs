@@ -56,6 +56,7 @@ pub fn run() {
             commands::ai::ai_load_model,
             commands::ai::ai_unload_model,
             commands::ai::ai_ask,
+            commands::ai::ai_ask_stream,
             commands::ai::ai_list_analyses,
             commands::ai::ai_get_analysis,
             commands::evidence::evidence_build,

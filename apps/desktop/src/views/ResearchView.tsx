@@ -6,7 +6,7 @@ import type {
   DocumentSummary,
   RuntimeStatus,
 } from '@researchai/shared-types';
-import { backend, onModelDownload } from '../backend/client';
+import { backend, onAskDelta, onModelDownload } from '../backend/client';
 import { CitedText } from '../components/CitedText';
 import { EmptyState } from '../components/EmptyState';
 import { useStore } from '../state/store';
@@ -48,6 +48,7 @@ export function ResearchView() {
   const [scopeDocs, setScopeDocs] = useState<DocumentSummary[]>([]);
   const [question, setQuestion] = useState('');
   const [asking, setAsking] = useState(false);
+  const [streamText, setStreamText] = useState('');
   const [result, setResult] = useState<AnalysisResponse | null>(null);
   const [showDebug, setShowDebug] = useState(false);
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
@@ -82,10 +83,16 @@ export function ResearchView() {
       .catch(() => setScopeDocs([]));
     void loadHistory();
     void refreshRuntime();
-    // Download progress is surfaced in Settings; subscribe only to keep the
-    // event channel warm and drop it cleanly on unmount.
+    // Streamed ask deltas render live under the asking notice; the
+    // subscription persists for the view's lifetime.
     let unlisten: (() => void) | undefined;
     let disposed = false;
+    void onAskDelta((text) => {
+      setStreamText((prev) => prev + text);
+    }).then((u) => {
+      if (disposed) u();
+      else unlisten = u;
+    });
     void onModelDownload(() => {}).then((u) => {
       if (disposed) u();
       else unlisten = u;
@@ -115,9 +122,13 @@ export function ResearchView() {
       return;
     }
     setAsking(true);
+    setStreamText('');
     try {
-      const res = await backend.aiAsk(activeProject.id, scopeIds, mode, q.trim());
+      // Stream path: deltas arrive via ai://ask-delta and render live while
+      // the awaited call resolves with the full persisted response.
+      const res = await backend.aiAskStream(activeProject.id, scopeIds, mode, q.trim());
       setResult(res);
+      setStreamText('');
       void refreshRuntime();
       void loadHistory();
     } catch (err) {
@@ -125,6 +136,7 @@ export function ResearchView() {
       void refreshRuntime();
     } finally {
       setAsking(false);
+      setStreamText('');
     }
   }
 
@@ -295,6 +307,9 @@ export function ResearchView() {
           {asking && (
             <div className="card notice">
               <p>Retrieving evidence and asking the local model…</p>
+              {streamText && (
+                <pre className="answer-stream tiny">{streamText}</pre>
+              )}
             </div>
           )}
 

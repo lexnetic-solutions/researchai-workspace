@@ -794,3 +794,31 @@ throwing away rendered audio:
   only chunks 3–4, cache cleared on success) and a signature/cache unit
   test. Battery: 100 lib + 20 contract locks + 1 live E2E, 0 warnings;
   tsc/build clean.
+
+## Post-release round — v0.1.0 hardening and performance
+
+With the release shipped (private repo, 4/5 installers attached; the Intel
+macOS build sits in GitHub's free-runner queue), three improvements landed:
+
+- **Prompt-prefix caching for asks**: `build_prompt` now emits
+  evidence-first, question-last prompts, so llama-server's prefix KV cache
+  reuses the (large) evidence block across regenerate / follow-up asks /
+  retries; the server is spawned with `--cache-reuse 256`. Per-ask telemetry
+  (prompt/completion tokens, ms/token) is logged for verification
+  (`researchai::ai` target). Documented in AI.md.
+- **Live export progress**: `export_document` emits `exports://progress`
+  events (preparing → rendering → writing, with elapsed seconds);
+  ExportsView renders live status and auto-refreshes on completion. Wire
+  shape pinned by a contract test.
+- **Streaming asks**: the pipeline split into prepare/finish phases and a
+  new `ai_ask_stream` command emits `ai://ask-delta` deltas while
+  generating, persisting the identical AnalysisResponse at the end
+  (ResearchView renders the live stream). Nothing is persisted until the
+  stream completes.
+- **Release dry-run dispatched** for its first live proof on all four
+  targets (no-publish workflow, read-only token).
+
+Verified after each change: cargo battery 123/123 (102 lib + 20 locks +
+1 E2E), 0 warnings; tsc + vite clean. Limitations unchanged: speech and
+LLM paths verified against fakes/canned servers pending real engines;
+macOS builds ad-hoc signed until signing secrets are configured.

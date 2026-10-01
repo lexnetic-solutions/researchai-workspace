@@ -148,6 +148,8 @@ export const backend = {
   aiUnloadModel: () => invoke<RuntimeStatus>('ai_unload_model'),
   aiAsk: (projectId: string, documentIds: string[], mode: AnalysisMode, question: string) =>
     invoke<AnalysisResponse>('ai_ask', { projectId, documentIds, mode, question }),
+  aiAskStream: (projectId: string, documentIds: string[], mode: AnalysisMode, question: string) =>
+    invoke<AnalysisResponse>('ai_ask_stream', { projectId, documentIds, mode, question }),
   aiListAnalyses: (projectId: string, limit = 50) =>
     invoke<AnalysisSummary[]>('ai_list_analyses', { projectId, limit }),
   aiGetAnalysis: (analysisId: string) =>
@@ -215,6 +217,17 @@ export async function onModelDownload(
   if (!isNative) return () => {};
   const unlisten = await listen<ModelDownloadEvent>('ai://model-download', (e) =>
     handler(e.payload),
+  );
+  return unlisten;
+}
+
+/** Subscribe to streaming ask deltas (no-op in browser preview). */
+export async function onAskDelta(
+  handler: (text: string) => void,
+): Promise<() => void> {
+  if (!isNative) return () => {};
+  const unlisten = await listen<{ text: string }>('ai://ask-delta', (e) =>
+    handler(e.payload.text),
   );
   return unlisten;
 }
