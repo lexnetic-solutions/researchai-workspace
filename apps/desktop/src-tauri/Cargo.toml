@@ -1,6 +1,6 @@
 [package]
 name = "researchai"
-version = "0.1.0"
+version = "0.1.1"
 description = "ResearchAI Workspace — private, offline-first AI research intelligence"
 authors = ["ResearchAI Workspace contributors"]
 license = "MIT"
