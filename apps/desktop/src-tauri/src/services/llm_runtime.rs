@@ -458,6 +458,11 @@ fn spawn_and_wait_ready(
         s.context_size.to_string(),
         "-fa".into(),
         "off".into(),
+        // Prompt-prefix KV cache: keep context chunks of repeated prefixes
+        // so asks that share evidence re-process only the tail (pairs with
+        // the evidence-first prompt order in analysis.rs).
+        "--cache-reuse".into(),
+        "256".into(),
     ];
     if s.threads > 0 {
         args.extend(["-t".into(), s.threads.to_string()]);

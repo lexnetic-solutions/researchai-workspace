@@ -341,7 +341,13 @@ fn build_prompt(
 ) -> (String, String) {
     let system = format!("{SYSTEM_PREAMBLE}\n\n{}", mode.system_prompt());
 
-    let mut user = format!("Question: {question}\n\nEvidence:\n");
+    // Evidence first, question last: llama-server's prompt-prefix KV cache
+    // reuses everything up to the first differing token, so keeping the
+    // (large) evidence block before the (small, per-ask) question lets
+    // repeated asks over the same evidence — regenerate, follow-up asks
+    // with a new question, retries — skip re-processing the whole context.
+    // (A mode switch still misses: it changes the system prompt.)
+    let mut user = String::from("Evidence:\n");
     for (i, e) in evidence.iter().enumerate() {
         let page = e
             .page_number
@@ -349,6 +355,7 @@ fn build_prompt(
             .unwrap_or_default();
         user.push_str(&format!("[{}] ({}{}) {}\n\n", i + 1, e.document_name, page, e.text));
     }
+    user.push_str(&format!("Question: {question}\n"));
     (system, user)
 }
 
@@ -585,7 +592,8 @@ mod tests {
         assert!(quick_sys.contains("Five findings:"));
         assert_ne!(chat_sys, deep_sys);
 
-        assert!(chat_user.starts_with("Question: Q?\n\nEvidence:"));
+        assert!(chat_user.starts_with("Evidence:\n"));
+        assert!(chat_user.ends_with("Question: Q?\n"));
         assert!(chat_user.contains("[1] (paper.txt, p. 2) Some claim."));
     }
 

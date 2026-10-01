@@ -118,3 +118,16 @@ answer can only be as honest as the evidence it cites:
   a later phase, see [PACKAGING.md](PACKAGING.md)).
 - Prompt-injection hardening for imported documents (treat chunk text as
   data, never as instructions) is a noted follow-up for the security pass.
+
+## Prompt-prefix caching (post-plan optimisation)
+
+Ask prompts are assembled **evidence-first, question-last**
+(`analysis.rs::build_prompt`). llama-server's prompt-prefix KV cache reuses
+everything up to the first differing token, so repeated asks over the same
+evidence set — regenerate, a follow-up question, a retry — re-process only
+the short tail instead of the whole context. The server is launched with
+`--cache-reuse 256` (`llm_runtime.rs`) so even prefixes that diverge slightly
+(e.g. re-ranked evidence sharing a leading chunk) keep partial reuse; mode
+switches still miss because they change the system prompt. Custom flags in
+Settings → Local AI are appended after the built-ins, so a user can override
+or extend `--cache-reuse` there.
