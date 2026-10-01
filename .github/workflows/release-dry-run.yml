@@ -100,8 +100,10 @@ jobs:
         run: |
           set -e
           BUNDLE_DIR="apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
-          echo "Contents of $BUNDLE_DIR:"
-          find "$BUNDLE_DIR" -type f | head -40
+          # No recursive listing here: under `set -e -o pipefail` a
+          # `find | head` SIGPIPEs once a bundle staging dir exceeds the
+          # line cap and would fail the step (seen in the first dry run on
+          # Linux). The case checks below are the real assertions.
           case '${{ matrix.target }}' in
             *apple*)
               test -n "$(find "$BUNDLE_DIR" -name '*.dmg' -type f -print -quit)" || {
