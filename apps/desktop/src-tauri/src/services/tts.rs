@@ -1127,16 +1127,62 @@ mod tests {
         path
     }
 
-    /// Write an executable fake `piper` that reads stdin, writes a small
-    /// but *valid* 24 kHz mono 16-bit PCM WAV (400-byte payload) and exits
-    /// with the given code (POSIX sh loop for the `--output_file <path>`
-    /// value — no bashisms).
+    /// WAV bytes as the fake piper writes them: declared 400-byte data
+    /// chunk at 24 kHz/48 kB/s → exactly 8 ms. Built in Rust because shell
+    /// `printf '\xHH'` is not portable (dash's printf has no \x support,
+    /// which produced garbage WAVs on Ubuntu CI).
+    fn fake_piper_wav_bytes() -> Vec<u8> {
+        let mut bytes: Vec<u8> = b"RIFF".to_vec();
+        bytes.extend_from_slice(&400u32.to_le_bytes());
+        bytes.extend_from_slice(b"WAVE");
+        bytes.extend_from_slice(b"fmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        bytes.extend_from_slice(&1u16.to_le_bytes()); // mono
+        bytes.extend_from_slice(&24_000u32.to_le_bytes());
+        bytes.extend_from_slice(&48_000u32.to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes()); // block align
+        bytes.extend_from_slice(&16u16.to_le_bytes()); // bits
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&400u32.to_le_bytes());
+        bytes.extend_from_slice(&vec![0u8; 400]);
+        bytes
+    }
+
+    /// WAV bytes as the fake macOS `say` writes them: declared 48 000-byte
+    /// data chunk at 48 kB/s → exactly 1000 ms. Built in Rust for the same
+    /// dash/printf portability reason as [`fake_piper_wav_bytes`].
+    fn fake_say_wav_bytes() -> Vec<u8> {
+        let mut bytes: Vec<u8> = b"RIFF".to_vec();
+        bytes.extend_from_slice(&4684u32.to_le_bytes());
+        bytes.extend_from_slice(b"WAVE");
+        bytes.extend_from_slice(b"fmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        bytes.extend_from_slice(&1u16.to_le_bytes()); // mono
+        bytes.extend_from_slice(&24_000u32.to_le_bytes());
+        bytes.extend_from_slice(&48_000u32.to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes()); // block align
+        bytes.extend_from_slice(&16u16.to_le_bytes()); // bits
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&48_000u32.to_le_bytes());
+        bytes.extend_from_slice(&vec![0u8; 4680]);
+        bytes
+    }
+
+    /// Write an executable fake `piper` that reads stdin and copies a
+    /// Rust-generated valid 24 kHz mono 16-bit PCM WAV (400-byte payload)
+    /// into `--output_file <path>`, then exits with the given code (POSIX
+    /// sh loop for the argument scan — no bashisms, no printf escapes).
     fn write_fake_piper(dir: &Path, exit_code: i32) -> PathBuf {
+        let src = dir.join("fake-piper-payload.wav");
+        std::fs::write(&src, fake_piper_wav_bytes()).unwrap();
+        let src = src.display().to_string();
         let script = dir.join("fake-piper.sh");
         std::fs::write(
             &script,
             format!(
-                "#!/bin/sh\nout=\"\"\nprev=\"\"\nfor a in \"$@\"; do\n  if [ \"$prev\" = \"--output_file\" ]; then out=\"$a\"; fi\n  prev=\"$a\"\ndone\ncat > /dev/null\nprintf 'RIFF' > \"$out\"\nprintf '\\x90\\x01\\x00\\x00' >> \"$out\"\nprintf 'WAVE' >> \"$out\"\nprintf 'fmt ' >> \"$out\"\nprintf '\\x10\\x00\\x00\\x00' >> \"$out\"\nprintf '\\x01\\x00' >> \"$out\"\nprintf '\\x01\\x00' >> \"$out\"\nprintf '\\xc0\\x5d\\x00\\x00' >> \"$out\"\nprintf '\\x80\\xbb\\x00\\x00' >> \"$out\"\nprintf '\\x02\\x00' >> \"$out\"\nprintf '\\x10\\x00' >> \"$out\"\nprintf 'data' >> \"$out\"\nprintf '\\x90\\x01\\x00\\x00' >> \"$out\"\nhead -c 400 /dev/zero >> \"$out\"\nexit {exit_code}\n"
+                "#!/bin/sh\nout=\"\"\nprev=\"\"\nfor a in \"$@\"; do\n  if [ \"$prev\" = \"--output_file\" ]; then out=\"$a\"; fi\n  prev=\"$a\"\ndone\ncat > /dev/null\ncat '{src}' > \"$out\"\nexit {exit_code}\n"
             ),
         )
         .unwrap();
@@ -1150,10 +1196,13 @@ mod tests {
     fn write_counting_fake_piper(dir: &Path, fail_from: usize, fail_to: usize) -> PathBuf {
         let script = dir.join(format!("counting-piper-{fail_from}-{fail_to}.sh"));
         let counter = dir.join("calls.txt").display().to_string();
+        let src = dir.join("fake-piper-payload.wav");
+        std::fs::write(&src, fake_piper_wav_bytes()).unwrap();
+        let src = src.display().to_string();
         std::fs::write(
             &script,
             format!(
-                "#!/bin/sh\nout=\"\"; prev=\"\"\nfor a in \"$@\"; do\n  if [ \"$prev\" = \"--output_file\" ]; then out=\"$a\"; fi\n  prev=\"$a\"\ndone\nc=\"{counter}\"\nn=$(cat \"$c\" 2>/dev/null) || true\n[ -z \"$n\" ] && n=0\nn=$((n+1))\necho \"$n\" > \"$c\"\nif [ \"$n\" -ge {fail_from} ] && [ \"$n\" -le {fail_to} ]; then exit 5; fi\ncat > /dev/null\nprintf 'RIFF' > \"$out\"\nprintf '\\x90\\x01\\x00\\x00' >> \"$out\"\nprintf 'WAVE' >> \"$out\"\nprintf 'fmt ' >> \"$out\"\nprintf '\\x10\\x00\\x00\\x00' >> \"$out\"\nprintf '\\x01\\x00' >> \"$out\"\nprintf '\\x01\\x00' >> \"$out\"\nprintf '\\xc0\\x5d\\x00\\x00' >> \"$out\"\nprintf '\\x80\\xbb\\x00\\x00' >> \"$out\"\nprintf '\\x02\\x00' >> \"$out\"\nprintf '\\x10\\x00' >> \"$out\"\nprintf 'data' >> \"$out\"\nprintf '\\x90\\x01\\x00\\x00' >> \"$out\"\nhead -c 400 /dev/zero >> \"$out\"\nexit 0\n"
+                "#!/bin/sh\nout=\"\"; prev=\"\"\nfor a in \"$@\"; do\n  if [ \"$prev\" = \"--output_file\" ]; then out=\"$a\"; fi\n  prev=\"$a\"\ndone\nc=\"{counter}\"\nn=$(cat \"$c\" 2>/dev/null) || true\n[ -z \"$n\" ] && n=0\nn=$((n+1))\necho \"$n\" > \"$c\"\nif [ \"$n\" -ge {fail_from} ] && [ \"$n\" -le {fail_to} ]; then exit 5; fi\ncat > /dev/null\ncat '{src}' > \"$out\"\nexit 0\n"
             ),
         )
         .unwrap();
@@ -1379,9 +1428,14 @@ mod tests {
     fn say_provider_renders_via_fake_binary() {
         let dir = TempDir::new_with_label("tts");
         let script = dir.path().join("fake-say.sh");
+        let src = dir.path().join("fake-say-payload.wav");
+        std::fs::write(&src, fake_say_wav_bytes()).unwrap();
+        let src = src.display().to_string();
         std::fs::write(
             &script,
-            "#!/bin/sh\n# emulate macOS say: -o <file>; speak text is last arg\nprev=\"\"\nout=\"\"\nfor a in \"$@\"; do\n  if [ \"$prev\" = \"-o\" ]; then out=\"$a\"; fi\n  prev=\"$a\"\ndone\nprintf 'RIFF' > \"$out\"\nprintf '\\x4c\\x12\\x00\\x00' >> \"$out\"\nprintf 'WAVE' >> \"$out\"\nprintf 'fmt ' >> \"$out\"\nprintf '\\x10\\x00\\x00\\x00' >> \"$out\"\nprintf '\\x01\\x00' >> \"$out\"\nprintf '\\x01\\x00' >> \"$out\"\nprintf '\\xc0\\x5d\\x00\\x00' >> \"$out\"\nprintf '\\x80\\xbb\\x00\\x00' >> \"$out\"\nprintf '\\x02\\x00' >> \"$out\"\nprintf '\\x10\\x00' >> \"$out\"\nprintf 'data' >> \"$out\"\nprintf '\\x80\\xbb\\x00\\x00' >> \"$out\"\nhead -c 4680 /dev/zero >> \"$out\"\nexit 0\n",
+            format!(
+                "#!/bin/sh\n# emulate macOS say: -o <file>; speak text is last arg\nprev=\"\"\nout=\"\"\nfor a in \"$@\"; do\n  if [ \"$prev\" = \"-o\" ]; then out=\"$a\"; fi\n  prev=\"$a\"\ndone\ncat '{src}' > \"$out\"\nexit 0\n"
+            ),
         )
         .unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();

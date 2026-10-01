@@ -685,6 +685,10 @@ with socketserver.TCPServer(("127.0.0.1", port), Handler) as httpd:
         false
     }
 
+    // Live-server tests run on Unix only: the fake llama-server is a
+    // `#!/usr/bin/env python3` script, which Windows cannot exec directly
+    // (os error 193). Process-shape tests below stay cross-platform.
+    #[cfg(unix)]
     #[test]
     fn starts_becomes_ready_and_unloads_cleanly() {
         let (_dir, script, model, pid_file) = setup_fake_server();
@@ -737,6 +741,7 @@ with socketserver.TCPServer(("127.0.0.1", port), Handler) as httpd:
         assert!(matches!(state, LoadState::Failed { .. }));
     }
 
+    #[cfg(unix)]
     #[test]
     fn terminates_stale_server_from_previous_run() {
         let (_dir, script, model, pid_file) = setup_fake_server();

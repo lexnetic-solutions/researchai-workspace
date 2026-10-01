@@ -355,16 +355,56 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
-    /// One-shot canned HTTP server: reads the request head, writes `body`,
-    /// closes. Returns the bound URL.
+    /// One-shot canned HTTP server: accepts a single connection, reads the
+    /// whole request (Content-Length aware), writes the full response, and
+    /// closes the socket gracefully. The graceful half-close and drain
+    /// matter on Windows, where a hard close on an unread socket can abort
+    /// the client's pending read with os error 10053 before it sees the
+    /// response bytes.
     fn serve_once(body: &'static str) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
         let addr = listener.local_addr().unwrap();
         std::thread::spawn(move || {
             let (mut sock, _) = listener.accept().expect("accept");
+            // Read until end of headers, then up to Content-Length more bytes.
+            let mut raw = Vec::new();
             let mut buf = [0u8; 4096];
-            let _ = sock.read(&mut buf); // request head is small; one read is fine
-            sock.write_all(body.as_bytes()).expect("write");
+            loop {
+                match sock.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        raw.extend_from_slice(&buf[..n]);
+                        let head_end = raw
+                            .windows(4)
+                            .position(|w| w == b"\r\n\r\n")
+                            .map(|p| p + 4);
+                        if let Some(head_end) = head_end {
+                            let len = String::from_utf8_lossy(&raw[..head_end])
+                                .lines()
+                                .find_map(|l| {
+                                    let (k, v) = l.split_once(':')?;
+                                    k.eq_ignore_ascii_case("content-length")
+                                        .then(|| v.trim().parse::<usize>().ok())?
+                                })
+                                .unwrap_or(0);
+                            if raw.len() >= head_end + len {
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let _ = sock.write_all(body.as_bytes());
+            let _ = sock.flush();
+            let _ = sock.shutdown(std::net::Shutdown::Write);
+            // Drain until the peer closes so no response bytes are lost to
+            // a platform RST-on-close race.
+            while let Ok(n) = sock.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+            }
         });
         format!("http://{addr}")
     }
