@@ -159,7 +159,7 @@ fn supervisor_loop(
     }
 
     match cmd.spawn() {
-        Ok(child) => {
+        Ok(mut child) => {
             let pid = child.id();
             *child_pid.lock().expect("pid lock") = Some(pid);
             owns_child.store(true, Ordering::SeqCst);
@@ -174,7 +174,7 @@ fn supervisor_loop(
                     break;
                 }
                 if kill.load(Ordering::SeqCst) {
-                    return;
+                    break;
                 }
                 std::thread::sleep(Duration::from_millis(500));
             }
@@ -183,6 +183,12 @@ fn supervisor_loop(
             while !kill.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_millis(1000));
             }
+
+            // Kill and reap on the way out. Without wait() the killed child
+            // lingers as a zombie of this process, so liveness probes like
+            // kill -0 keep reporting it alive after shutdown.
+            let _ = child.kill();
+            let _ = child.wait();
         }
         Err(e) => {
             log::error!(target: "researchai::engine", "could not spawn bundled sidecar: {e}");
