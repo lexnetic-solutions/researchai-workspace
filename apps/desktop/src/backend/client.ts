@@ -19,6 +19,7 @@ import type {
   ExportFormat,
   ExportKind,
   ExportKindCapability,
+  ExportProgressEvent,
   ExportResult,
   ExportStats,
   FormattedReference,
@@ -213,6 +214,17 @@ export async function onModelDownload(
 ): Promise<() => void> {
   if (!isNative) return () => {};
   const unlisten = await listen<ModelDownloadEvent>('ai://model-download', (e) =>
+    handler(e.payload),
+  );
+  return unlisten;
+}
+
+/** Subscribe to export progress events (no-op in browser preview). */
+export async function onExportProgress(
+  handler: (ev: ExportProgressEvent) => void,
+): Promise<() => void> {
+  if (!isNative) return () => {};
+  const unlisten = await listen<ExportProgressEvent>('exports://progress', (e) =>
     handler(e.payload),
   );
   return unlisten;

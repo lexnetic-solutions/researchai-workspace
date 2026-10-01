@@ -6,9 +6,10 @@ import type {
   ExportFile,
   ExportFormat,
   ExportKind,
+  ExportProgressEvent,
   ExportStats,
 } from '@researchai/shared-types';
-import { backend } from '../backend/client';
+import { backend, onExportProgress } from '../backend/client';
 import { EmptyState } from '../components/EmptyState';
 import { useStore } from '../state/store';
 
@@ -35,6 +36,7 @@ export function ExportsView() {
   const [tables, setTables] = useState<EvidenceSummary[]>([]);
   const [sourceId, setSourceId] = useState<string>('');
   const [exporting, setExporting] = useState(false);
+  const [progress, setProgress] = useState<ExportProgressEvent | null>(null);
   const [files, setFiles] = useState<ExportFile[]>([]);
   const [stats, setStats] = useState<ExportStats | null>(null);
 
@@ -70,9 +72,30 @@ export function ExportsView() {
     void reloadFiles();
   }, [reloadSources, reloadFiles]);
 
+  // Live status for long DOCX/PDF renders; the final "writing" phase also
+  // refreshes the file list so finished exports appear without a reload.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void onExportProgress((ev) => {
+      setProgress(ev);
+      if (ev.phase === 'writing') {
+        void reloadFiles();
+      }
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [reloadFiles]);
+
   async function runExport() {
     if (!activeProject) return;
     setExporting(true);
+    setProgress(null);
     try {
       const needsSource = kind !== 'bibliography';
       if (needsSource && !sourceId) {
@@ -95,6 +118,7 @@ export function ExportsView() {
       pushToast('error', err instanceof Error ? err.message : String(err));
     } finally {
       setExporting(false);
+      setProgress(null);
     }
   }
 
@@ -223,6 +247,12 @@ export function ExportsView() {
           </button>
           {!native && <span className="tiny muted">(preview writes mock entries)</span>}
         </div>
+        {exporting && progress && (
+          <p className="tiny muted" role="status" style={{ marginTop: '0.5rem' }}>
+            {progress.label} — {progress.phase}
+            {progress.elapsedSecs > 0 ? ` · ${progress.elapsedSecs}s` : ''}
+          </p>
+        )}
         {format === 'docx' || format === 'pdf' ? (
           <p className="tiny muted" style={{ marginTop: '0.5rem' }}>
             DOCX/PDF rendering uses the document engine sidecar.

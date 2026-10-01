@@ -146,6 +146,16 @@ export interface ExportStats {
   readonly totalBytes: number;
 }
 
+/** Progress event for long exports (DOCX/PDF engine renders). */
+export interface ExportProgressEvent {
+  readonly jobId: string;
+  /** "preparing" | "rendering" | "writing" */
+  readonly phase: string;
+  /** Human-readable label (kind → format). */
+  readonly label: string;
+  readonly elapsedSecs: number;
+}
+
 /** Result of an import batch (per-file errors are isolated, spec §42). */
 export interface ImportSummary {
   readonly imported: number;
