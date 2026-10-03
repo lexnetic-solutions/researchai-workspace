@@ -1,9 +1,21 @@
-# ResearchAI Workspace
+<p align="center">
+  <img src="apps/desktop/src-tauri/icons/icon.png" alt="ResearchAI Workspace" width="120" height="120" />
+</p>
 
-A private, offline-first AI research intelligence workspace for students and
-researchers. Import your papers, read them, question them with traceable
-citations, compare authors, and export academic artefacts — all on your own
-machine.
+<h1 align="center">ResearchAI Workspace</h1>
+
+<p align="center">
+  <strong>A private, offline-first AI research intelligence workspace.</strong><br/>
+  Import your papers, read them, question them with traceable citations,
+  compare authors, and export academic artefacts — on your own machine.
+</p>
+
+<p align="center">
+  <a href="https://github.com/pathway-solutions/researchai-workspace/actions/workflows/ci.yml"><img src="https://github.com/pathway-solutions/researchai-workspace/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/release-v0.1.1-blue" alt="Release v0.1.1" />
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey" alt="Platforms" />
+  <img src="https://img.shields.io/badge/licence-MIT-green" alt="Licence: MIT" />
+</p>
 
 > **Status: Phase 9 — Platform installers (final phase).** The app launches, manages projects,
 > imports documents (managed copy + checksum dedup), parses PDF/DOCX/TXT/MD/HTML
@@ -20,6 +32,12 @@ machine.
 > Release CI builds the frozen sidecar + signed-when-configured installers
 > (macOS DMG, Windows NSIS) and the first-run **Setup checklist** verifies
 > every subsystem live.
+
+## Screenshots
+
+_App screenshots (three-panel workspace, evidence matrix, setup checklist)
+will be captured on real hardware and placed here — presentation pattern
+adapted from the Voicebox study; see [docs/DESIGN.md](docs/DESIGN.md)._
 
 ## Repository layout
 

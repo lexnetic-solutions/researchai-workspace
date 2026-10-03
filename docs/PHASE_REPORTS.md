@@ -822,3 +822,48 @@ Verified after each change: cargo battery 123/123 (102 lib + 20 locks +
 1 E2E), 0 warnings; tsc + vite clean. Limitations unchanged: speech and
 LLM paths verified against fakes/canned servers pending real engines;
 macOS builds ad-hoc signed until signing secrets are configured.
+
+## Release round — v0.1.1 shipped, then a Voicebox design/skills study
+
+**v0.1.1 released.** Version bumped across all 7 files (tauri.conf,
+Cargo.toml/lock, two package.json, shared-types, pyproject), tag pushed,
+release run 36812905404 completed with macos-14/windows/ubuntu assets
+all correctly named `…_0.1.1_…` (4/4 attached; macos-13 stays queued on
+free runners). An earlier bad cut that reused 0.1.0-named assets was
+deleted and its run cancelled to free the release concurrency lock. The
+release body — which the workflow ships empty — was backfilled from the
+new CHANGELOG (`gh release edit v0.1.1 --notes-file …`, 1741 chars).
+
+**Voicebox study → project design.** `github.com/jamiepine/voicebox`
+(MIT) was cloned to a scratch dir outside this repo (spec §3) and mined
+for transferable practice:
+
+- **Four agent skills extracted** into `.agents/skills/`, rewritten for
+  this repo's mechanics: `draft-release-notes` (CHANGELOG `[Unreleased]`
+  workflow), `release-bump` (7-file bump, tag/watch/cleanup procedure,
+  release-yml concurrency-lock recovery), `add-speech-engine` (our
+  `TextToSpeechProvider`/`run_chunked`/fake-binary patterns + CI
+  portability lessons), `triage-prs` (kept mostly intact; dormant until
+  an external PR queue exists).
+- **New `CHANGELOG.md`** (Keep a Changelog) seeded with stamped 0.1.0
+  and 0.1.1 narratives — the target both release skills operate on.
+- **Design concept extracted** into `docs/DESIGN.md`: token-pair
+  discipline, radius scale, status-chip rules, focus/typography/density
+  conventions, and the README imagery pattern (centered icon → tagline →
+  badge row → screenshots). README now has the hero + badges and a
+  Screenshots placeholder.
+- **TTS splitter hardened** in `services/tts.rs`: `split_sentences` now
+  skips abbreviation/initial/numeric periods (`Dr.`, `et al.`, `p.m.`,
+  `J. Smith`, list markers) and a new `split_overlong_sentence` enforces
+  the 220-word ceiling on pathological no-punctuation input by cutting at
+  clause boundaries first — previously such input shipped as one
+  over-length chunk. `CHUNKER_VERSION` was added to the parts-cache
+  signature so cached parts can never splice across chunker changes.
+- **Attribution**: THIRD_PARTY_LICENSES.md gained a "Studied reference
+  projects" section (Voicebox/MIT, what landed where); skill headers and
+  code comments credit the source.
+
+Verified: cargo battery 125/125 (104 lib — 2 new splitter tests — + 20
+locks + 1 E2E), 0 warnings; `tsc --noEmit` and vite build clean.
+Known gaps unchanged: v0.1.1 assets are ad-hoc signed (Apple secrets
+gated/ready), macos-13 still queued, real-hardware validation pending.

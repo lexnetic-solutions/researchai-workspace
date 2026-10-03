@@ -74,6 +74,12 @@ pub struct TtsStatus {
 /// Maximum words per synthesis chunk (~1 minute of speech at normal rate).
 pub(crate) const MAX_CHUNK_WORDS: usize = 220;
 
+/// Bump whenever chunk boundaries change (splitter or ceiling tweaks) so
+/// cached part files rendered under an older chunker can never be spliced
+/// into a newer one — manifest counts alone cannot prove matching
+/// boundaries. Fed into [`parts_signature`].
+const CHUNKER_VERSION: &str = "chunker-v2-clause-fallback";
+
 /// Provider-agnostic speech synthesis interface (spec §47.7). Implemented by
 /// [`PiperProvider`] (spec default) and, on macOS, [`MacOsSayProvider`].
 pub trait TextToSpeechProvider: Send + Sync {
@@ -540,15 +546,24 @@ fn remove_file_best_effort(path: &Path) {
 }
 
 /// Pack `text` into chunk boundaries of at most [`MAX_CHUNK_WORDS`] words,
-/// cutting only at sentence ends (`. `, `? `, `! ` or end of text). A single
-/// pathological run without sentence ends is emitted as one (over-length)
-/// chunk rather than split mid-sentence.
+/// cutting at sentence ends (`. `, `? `, `! ` or end of text). A single
+/// pathological sentence longer than the ceiling is passed to
+/// [`split_overlong_sentence`] — cut at clause boundaries or whole words,
+/// never mid-word — so the ceiling holds for every input.
 pub(crate) fn chunk_text(text: &str) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut current = String::new();
     let mut words = 0usize;
     for sentence in split_sentences(text) {
         let w = sentence.split_whitespace().count().max(1);
+        if w > MAX_CHUNK_WORDS {
+            if !current.is_empty() {
+                chunks.push(std::mem::take(&mut current));
+                words = 0;
+            }
+            chunks.extend(split_overlong_sentence(&sentence, MAX_CHUNK_WORDS));
+            continue;
+        }
         if !current.is_empty() && words + w > MAX_CHUNK_WORDS {
             chunks.push(std::mem::take(&mut current));
             words = 0;
@@ -565,8 +580,51 @@ pub(crate) fn chunk_text(text: &str) -> Vec<String> {
     chunks
 }
 
+/// Split a single sentence longer than `max_words` into pieces of at most
+/// `max_words`, preferring the last clause boundary (`,`, `;`, `:`, `—`,
+/// `–`) in the back half of each window, then falling back to a whole-word
+/// cut. Never splits inside a word. (Clause-fallback idea adapted from
+/// Voicebox's `split_text_into_chunks`; MIT.)
+fn split_overlong_sentence(sentence: &str, max_words: usize) -> Vec<String> {
+    let mut pieces = Vec::new();
+    let mut words: Vec<&str> = Vec::new();
+    let mut clause_at: Option<usize> = None;
+    for word in sentence.split_whitespace() {
+        words.push(word);
+        if word.ends_with(',') || word.ends_with(';') || word.ends_with(':')
+            || word.ends_with('—') || word.ends_with('–')
+        {
+            clause_at = Some(words.len());
+        }
+        if words.len() == max_words {
+            let cut = clause_at
+                .filter(|&c| c > max_words / 2)
+                .unwrap_or(words.len());
+            pieces.push(words[..cut].join(" "));
+            words = words.split_off(cut);
+            // Re-locate the last clause marker in the carried-over tail.
+            clause_at = words
+                .iter()
+                .rposition(|w| {
+                    w.ends_with(',') || w.ends_with(';') || w.ends_with(':')
+                        || w.ends_with('—') || w.ends_with('–')
+                })
+                .map(|i| i + 1);
+        }
+    }
+    if !words.is_empty() {
+        pieces.push(words.join(" "));
+    }
+    pieces
+}
+
 /// Split into sentences ending in `.`, `!` or `?` (delimiter kept), falling
-/// back to the remaining text as one final sentence.
+/// back to the remaining text as one final sentence. Periods that follow a
+/// known abbreviation (`Dr.`, `e.g.`, `p.m.`, …), a single-letter initial
+/// (`J. Smith`) or a bare number (`3.`, list markers) are not boundaries —
+/// abbreviation handling adapted from Voicebox's splitter (MIT). Over-
+/// merging is safe here: the splitter only packs chunks, it never drops
+/// text, and [`split_overlong_sentence`] enforces the word ceiling.
 fn split_sentences(text: &str) -> Vec<String> {
     let mut sentences = Vec::new();
     let mut start = 0usize;
@@ -578,6 +636,9 @@ fn split_sentences(text: &str) -> Vec<String> {
                 Some(' ') | Some('\t') | Some('\n') | Some('\r') => true,
                 _ => false,
             };
+            if end_of_sentence && c == '.' && !period_ends_sentence(text, i) {
+                continue;
+            }
             if end_of_sentence {
                 let s = text[start..i + c.len_utf8()].trim();
                 if !s.is_empty() {
@@ -596,6 +657,48 @@ fn split_sentences(text: &str) -> Vec<String> {
     sentences
 }
 
+/// Abbreviations (lowercase, inner dots kept) whose trailing period never
+/// ends a sentence. Includes the academic favourites — `et al.` matches via
+/// its `al` tail, `e.g.`/`i.e.` via their dotted forms.
+const SENTENCE_ABBREVIATIONS: &[&str] = &[
+    "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc",
+    "inc", "ltd", "corp", "dept", "est", "approx", "no", "fig", "al",
+    "cf", "ed", "vol", "pp", "eq", "ref", "ch", "sec", "op", "ibid",
+    "e.g", "i.e", "a.m", "p.m", "u.s", "ph.d",
+];
+
+/// Why the `.` at byte `i` is (not) a sentence boundary: false for known
+/// abbreviations, single-letter initials (`J. Smith`) and bare numbers
+/// (list markers like `1.`), true otherwise. Called only for periods that
+/// already sit before whitespace or end of text.
+fn period_ends_sentence(text: &str, i: usize) -> bool {
+    // Walk back over the alphanumeric run (plus inner dots, so `e.g.` and
+    // `U.S.` surface whole); any other byte stops the word.
+    let bytes = text.as_bytes();
+    let mut start = i;
+    while start > 0 {
+        let b = bytes[start - 1];
+        if b.is_ascii_alphanumeric() || b == b'.' {
+            start -= 1;
+        } else {
+            break;
+        }
+    }
+    let word = &text[start..i];
+    if word.is_empty() {
+        return true; // leading `.` — treat as a boundary, never a crash
+    }
+    // `J. Smith` — a lone letter is an initial, not a sentence.
+    if word.len() == 1 && word.as_bytes()[0].is_ascii_alphabetic() {
+        return false;
+    }
+    // `1. First item` / `3.5` (before whitespace) — digits don't end prose.
+    if word.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    !SENTENCE_ABBREVIATIONS.contains(&word.to_ascii_lowercase().as_str())
+}
+
 /// Small on-disk manifest (`tts-parts.json`, written next to the part
 /// files) that lets a re-run reuse already-rendered chunks instead of
 /// re-synthesizing the whole narration. The signature guards every entry:
@@ -609,12 +712,15 @@ struct PartsManifest {
     parts: Vec<String>,
 }
 
-/// Cache signature: what is spoken and by whom. Speech rate is deliberately
-/// excluded — a speed change alters each subprocess run, so the cache must
-/// not be trusted across it.
+/// Cache signature: what is spoken, by whom, and under which chunker
+/// version. Speech rate is deliberately excluded — a speed change alters
+/// each subprocess run, so the cache must not be trusted across it;
+/// [`CHUNKER_VERSION`] covers boundary changes the text alone cannot show.
 fn parts_signature(provider_id: &str, text: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
+    h.update(CHUNKER_VERSION.as_bytes());
+    h.update([0u8]);
     h.update(provider_id.as_bytes());
     h.update([0u8]);
     h.update(text.as_bytes());
@@ -1286,6 +1392,64 @@ mod tests {
     fn short_text_stays_a_single_chunk() {
         assert_eq!(chunk_text("One sentence only.").len(), 1);
         assert!(chunk_text("   ").is_empty());
+    }
+
+    #[test]
+    fn split_sentences_skips_abbreviations_and_initials() {
+        // Titles, initials and academic suffixes never end a sentence.
+        let s = split_sentences("Dr. Smith and Prof. Jones met. They talked.");
+        assert_eq!(s.len(), 2, "{s:?}");
+        assert_eq!(s[0], "Dr. Smith and Prof. Jones met.");
+
+        let s = split_sentences("J. Smith left. Bye.");
+        assert_eq!(s.len(), 2, "{s:?}");
+        assert!(s[0].starts_with("J. Smith"), "{s:?}");
+
+        let s = split_sentences("The work by Smith et al. showed results. Done.");
+        assert_eq!(s.len(), 2, "{s:?}");
+        assert!(s[0].ends_with("results."), "{s:?}");
+
+        let s = split_sentences("See Fig. 3 and p.m. readings. Done.");
+        assert_eq!(s.len(), 2, "{s:?}");
+
+        // Real boundaries still split, and `?`/`!` bypass the checks.
+        let s = split_sentences("Done? Yes! Go.");
+        assert_eq!(s.len(), 3, "{s:?}");
+
+        // List markers merge (safe over-merge: text is never dropped).
+        let s = split_sentences("1. First item 2. Second item");
+        assert_eq!(s.len(), 1, "{s:?}");
+    }
+
+    #[test]
+    fn chunk_text_holds_the_ceiling_for_pathological_sentences() {
+        // One 500-word sentence with NO sentence punctuation and no commas:
+        // the hard cut must land on whole words at exactly the ceiling.
+        let text = (0..500).map(|i| format!("w{i}")).collect::<Vec<_>>().join(" ");
+        let chunks = chunk_text(&text);
+        assert_eq!(chunks.len(), 3, "expected 220+220+60, got {}", chunks.len());
+        assert_eq!(chunks[0].split_whitespace().count(), MAX_CHUNK_WORDS);
+        assert_eq!(chunks[1].split_whitespace().count(), MAX_CHUNK_WORDS);
+        assert_eq!(chunks[2].split_whitespace().count(), 60);
+        // Nothing lost or split mid-word.
+        let rejoined = chunks.join(" ");
+        assert_eq!(rejoined, text);
+
+        // With a comma in the back half of the window, prefer that clause
+        // boundary over the hard cut.
+        let mut words: Vec<String> = (0..300).map(|i| format!("w{i}")).collect();
+        words[150] = "w150,".into();
+        let text = words.join(" ");
+        let chunks = chunk_text(&text);
+        assert_eq!(chunks.len(), 2, "got {}", chunks.len());
+        assert_eq!(
+            chunks[0].split_whitespace().count(),
+            151,
+            "cut should prefer the comma at 150"
+        );
+        assert!(chunks[0].ends_with(','), "{}", chunks[0]);
+        assert_eq!(chunks[1].split_whitespace().count(), 149);
+        assert_eq!(chunks.join(" "), text);
     }
 
     #[test]

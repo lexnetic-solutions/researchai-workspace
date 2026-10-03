@@ -67,6 +67,19 @@ by copying source trees into this repository.
 | python-pptx | PPTX export | MIT | github.com/scanny/python-pptx |
 | openpyxl | XLSX export | MIT | openpyxl.readthedocs.io |
 
+## Studied reference projects (cloned outside this repository)
+
+Per the rule above, reference clones live outside the repo; ideas are
+adapted into our own docs/code with attribution, never vendored wholesale.
+
+| Project | License | What we adapted | Where it landed |
+|---|---|---|---|
+| Voicebox (github.com/jamiepine/voicebox) | MIT | Four agent skills (release-notes drafting, release bump, TTS-engine integration, PR triage) rewritten for this repo's mechanics; design-token/README presentation concept; sentence-splitter abbreviation handling and clause-boundary fallback for long-text TTS chunking | `.agents/skills/*`, `docs/DESIGN.md`, README hero/badges, `apps/desktop/src-tauri/src/services/tts.rs` splitter (credited in code comments) |
+
+MIT permits this adaptation; the upstream copyright notice is retained in
+the skill file headers ("Adapted from Voicebox … MIT"). No Voicebox source
+files are committed to this repository.
+
 ## Review checklist before commercial distribution
 
 1. Re-run license verification for every row above (repos change licenses).
