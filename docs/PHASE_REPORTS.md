@@ -976,3 +976,14 @@ bug no CI job could see: the installed app's bundled engine died at exec.
 - **Verified locally**: frozen rebuild → collect → sidecar answers
   `/health` with `version 0.1.2`; cargo 129/129 (live E2E running
   against the frozen engine); engine ruff + pytest green.
+- **Second root cause found while checking the first**: even with the
+  runtime collected, `tauri.conf.json` mapped resources with
+  `"packaging/resources/sidecar/*": "sidecar/"` — Tauri's `dir/*` glob
+  is explicitly non-recursive ("sub-directories will be ignored"), so
+  the v0.1.3 DMG CI built was still 20 MB. Map the directory itself
+  (`"packaging/resources/sidecar/": "sidecar/"`) to copy recursively.
+  Caught by comparing DMG sizes before shipping — 20 MB vs 69 MB.
+- **End-to-end verified on the local release build**: installed app
+  logs `bundled sidecar healthy (pid …)`, `/health` answers from the
+  app-owned child process (no external engine on the port), app bundle
+  174 MB / DMG 69 MB with the full `_internal/` tree (40/40 entries).

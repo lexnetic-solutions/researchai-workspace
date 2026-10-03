@@ -40,7 +40,7 @@
     ],
     "category": "Productivity",
     "resources": {
-      "packaging/resources/sidecar/*": "sidecar/"
+      "packaging/resources/sidecar/": "sidecar/"
     },
     "shortDescription": "Offline-first AI research workspace",
     "longDescription": "Private, offline-first research intelligence: import papers, search and ask with citations, build evidence matrices, export academic artefacts, transcribe lectures and listen to spoken summaries — all on your machine.",

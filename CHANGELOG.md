@@ -28,6 +28,11 @@ fixes the bundle, makes sidecar failures visible in the log, and keeps
   and no installed app could parse anything. `collect-sidecar.mjs` now
   copies the runtime beside the binary. The bug was masked during
   testing by an externally started dev engine answering on the same port.
+- The bundle config mapped the sidecar with a non-recursive
+  `sidecar/*` glob (Tauri ignores sub-directories in `dir/*`), so even a
+  correctly collected `_internal/` never reached the app; it now maps the
+  directory itself (`packaging/resources/sidecar/` → `sidecar/`), which
+  copies recursively.
 - The engine supervisor now logs an instant sidecar death and a
   health-wait timeout instead of failing silently — a broken sidecar is
   diagnosable from `researchai-*.log` instead of an empty one.
