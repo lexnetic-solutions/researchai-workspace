@@ -1050,7 +1050,14 @@ work offline on first launch with zero setup.
   the script only retries exit 16. Transient: plain detach succeeds
   seconds later; finish locally by detaching and running
   `hdiutil convert rw.*.dmg -format UDZO -o <name>.dmg`. CI runners
-  (historically green) should be watched on the v0.1.4 legs.
+  were the real test — the v0.1.4 legs went green on every platform.
+- **Release**: v0.1.4 published from tag with all three active CI legs
+  green (macos-13 Intel remains perpetually queued — ignored); the new
+  fetch/seed steps ran on macOS, Ubuntu and Windows alike (the Windows
+  asset path concern is closed). Assets ship the AI stack — DMG
+  674,722,532 B, x64-setup.exe 508,498,161 B, AppImage 614,279,672 B,
+  deb 689,546,680 B — each with a published sha256 digest, and the
+  release body was extracted from the stamped `[0.1.4]` section.
 - **DMG verified**: 678,788,655 B (≈647 MB, matches the chosen "full
   bundle" size), attaches read-only, `.app` 812 MB with
   `Resources/{sidecar,llama×60,models/{Qwen3…gguf,embeddings}}`.
