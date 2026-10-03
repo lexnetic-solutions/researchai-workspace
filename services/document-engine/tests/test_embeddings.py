@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import math
+import os
 
 from fastapi.testclient import TestClient
 
 from researchai_document_engine.app import app
 from researchai_document_engine.embeddings import (
     DIMENSIONS,
+    _cache_dir,
     _hash_embedding,
     embed_texts,
     status,
@@ -21,6 +23,16 @@ def test_status_reports_engine_and_dimensions() -> None:
     s = status()
     assert s.engine in ("fastembed", "hashing-fallback")
     assert s.dimensions == DIMENSIONS
+
+
+def test_cache_dir_lives_under_the_data_models_dir(monkeypatch: object) -> None:
+    monkeypatch.setenv("RESEARCHAI_MODELS_DIR", "/data/models")  # type: ignore[attr-defined]
+    assert _cache_dir() == os.path.join("/data/models", "embeddings")
+
+
+def test_cache_dir_falls_back_to_fastembed_default(monkeypatch: object) -> None:
+    monkeypatch.delenv("RESEARCHAI_MODELS_DIR", raising=False)  # type: ignore[attr-defined]
+    assert _cache_dir() is None
 
 
 def test_hash_embedding_is_deterministic_and_normalised() -> None:

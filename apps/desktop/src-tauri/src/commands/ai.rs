@@ -246,7 +246,10 @@ pub async fn ai_load_model(app: AppHandle) -> AppResult<RuntimeStatus> {
         let state = app.state::<AppState>();
         let settings = state.db.get_ai_settings()?;
         let model = resolve_model(&state.db, &settings)?;
-        let binary = std::path::PathBuf::from(&settings.llama_server_path);
+        let binary = crate::services::bundled::resolve_llama_binary(
+            &settings.llama_server_path,
+            state.resource_dir.as_deref(),
+        )?;
         match state
             .llm_runtime
             .ensure_loaded(&binary, std::path::Path::new(&model.file_path), &settings, LOAD_DEADLINE)?
@@ -310,7 +313,10 @@ pub async fn ai_ask(
         // Build the provider: the local llama.cpp runtime, loaded on demand.
         // First Ask triggers the model load automatically.
         let model = resolve_model(&state.db, &ai)?;
-        let binary = std::path::PathBuf::from(&ai.llama_server_path);
+        let binary = crate::services::bundled::resolve_llama_binary(
+            &ai.llama_server_path,
+            state.resource_dir.as_deref(),
+        )?;
         if !matches!(state.llm_runtime.snapshot().state, LoadState::Ready { .. }) {
             state.llm_runtime.ensure_loaded(
                 &binary,
@@ -342,6 +348,7 @@ pub async fn ai_ask(
             model_id: Some(model.id.clone()),
             max_tokens: ai.max_tokens,
             temperature: ai.temperature,
+            context_size: ai.context_size,
         };
         analysis::ask(&state.db, &provider, &req)
     })
@@ -379,7 +386,10 @@ pub async fn ai_ask_stream(
         let ai = state.db.get_ai_settings()?;
 
         let model = resolve_model(&state.db, &ai)?;
-        let binary = std::path::PathBuf::from(&ai.llama_server_path);
+        let binary = crate::services::bundled::resolve_llama_binary(
+            &ai.llama_server_path,
+            state.resource_dir.as_deref(),
+        )?;
         if !matches!(state.llm_runtime.snapshot().state, LoadState::Ready { .. }) {
             state.llm_runtime.ensure_loaded(
                 &binary,
@@ -411,6 +421,7 @@ pub async fn ai_ask_stream(
             model_id: Some(model.id.clone()),
             max_tokens: ai.max_tokens,
             temperature: ai.temperature,
+            context_size: ai.context_size,
         };
         analysis::ask_streaming(&state.db, &provider, &req, &mut |delta| {
             let _ = app.emit(

@@ -24,6 +24,10 @@ pub struct AppState {
     /// Owns the bundled document-engine sidecar (Phase 9); dormant in dev,
     /// where the engine is started externally. Kills the child on exit.
     pub engine_runtime: EngineRuntime,
+    /// Bundled app resources (packaged: `.app/Contents/Resources`; dev:
+    /// the src-tauri dir). Used to resolve bundled AI assets (llama-server,
+    /// starter model, embedding cache) — None when the path resolver fails.
+    pub resource_dir: Option<PathBuf>,
 }
 
 impl AppState {
@@ -42,6 +46,10 @@ impl AppState {
     ) -> AppResult<Self> {
         std::fs::create_dir_all(&data_dir)?;
         let db = db::Db::open(&data_dir)?;
+        // First run: copy bundled AI assets (embedding cache + starter GGUF)
+        // into the data dir BEFORE settings load, so the out-of-the-box
+        // AI-enable lands in the settings the window opens with.
+        crate::services::bundled::seed_bundled_models(resource_dir.as_deref(), &data_dir, &db);
         let settings = db.load_settings()?;
         let queue = IngestionQueue::start(data_dir.clone());
         // Sweep leftover llama-server processes from previous runs, then
@@ -50,7 +58,7 @@ impl AppState {
         // Spawn the bundled document-engine sidecar when present (Phase 9);
         // dormant no-op in dev.
         let engine_runtime = EngineRuntime::start(
-            resource_dir.unwrap_or_else(|| data_dir.clone()),
+            resource_dir.clone().unwrap_or_else(|| data_dir.clone()),
             data_dir.join("models"),
         );
         Ok(Self {
@@ -60,6 +68,7 @@ impl AppState {
             _queue: queue,
             llm_runtime,
             engine_runtime,
+            resource_dir,
         })
     }
 }

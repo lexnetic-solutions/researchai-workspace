@@ -2,6 +2,7 @@
 
 pub mod ai;
 pub mod analysis;
+pub mod bundled;
 pub mod citations;
 pub mod diagnostics;
 pub mod documents;

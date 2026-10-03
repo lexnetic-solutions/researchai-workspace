@@ -98,6 +98,9 @@ pub struct AskRequest {
     /// Generation limits from the user's AI settings (spec §34).
     pub max_tokens: u32,
     pub temperature: f32,
+    /// llama-server context window — the prompt must fit under it or the
+    /// server rejects the whole request (spec §34).
+    pub context_size: u32,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -210,9 +213,49 @@ pub(crate) fn prepare_ask(
         .max_evidence
         .clamp(1, 20)
         .min(evidence.len());
-    let evidence = evidence[..max_evidence].to_vec();
+    let mut evidence = evidence[..max_evidence].to_vec();
+    let total_excerpts = evidence.len();
 
-    let (system_prompt, user_prompt) = build_prompt(req.mode, question, &evidence);
+    // The prompt must fit the model's context window: llama-server rejects
+    // the entire request when it doesn't (the bundled starter model runs a
+    // small ctx). Budget conservatively — ~4 chars/token for the context
+    // minus the completion allowance and chat-template slack — then drop
+    // excerpts from the end until the assembled prompt fits, truncating the
+    // first excerpt as a last resort so an ask never hard-fails on size.
+    let (mut system_prompt, mut user_prompt) = build_prompt(req.mode, question, &evidence);
+    let budget = (req.context_size as usize)
+        .saturating_sub(req.max_tokens as usize)
+        .saturating_sub(128) // chat template + sampler slack
+        * 4;
+    let mut dropped = 0usize;
+    let mut truncated = false;
+    while system_prompt.len() + user_prompt.len() > budget && evidence.len() > 1 {
+        evidence.pop();
+        dropped += 1;
+        let (s, u) = build_prompt(req.mode, question, &evidence);
+        system_prompt = s;
+        user_prompt = u;
+    }
+    if system_prompt.len() + user_prompt.len() > budget {
+        if let Some(first) = evidence.first_mut() {
+            let fixed =
+                (system_prompt.len() + user_prompt.len()).saturating_sub(first.text.len());
+            let room = budget.saturating_sub(fixed);
+            first.text = first.text.chars().take(room).collect();
+            truncated = true;
+            let (s, u) = build_prompt(req.mode, question, &evidence);
+            system_prompt = s;
+            user_prompt = u;
+        }
+    }
+    if dropped > 0 || truncated {
+        warnings.push(format!(
+            "Context window: kept {} of {total_excerpts} excerpts to fit the model's {}-token limit — raise context size in Settings → Local AI to include more.",
+            evidence.len(),
+            req.context_size,
+        ));
+    }
+
     Ok(PreparedOutcome::Ready(PreparedAsk {
         evidence,
         warnings,
@@ -570,6 +613,7 @@ mod tests {
             model_id: None,
             max_tokens: 256,
             temperature: 0.2,
+            context_size: 4096,
         }
     }
 
@@ -654,6 +698,29 @@ mod tests {
         assert!(resp.analysis_id.is_none());
         assert!(resp.answer.contains("No indexed sources matched"));
         assert!(db.list_analyses(&project, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn oversized_prompts_are_trimmed_to_the_context_window() {
+        let (_dir, db, project) = db_with_project("analysis-fit");
+        let big = "Deltas retreat when sediment supply falls below sea-level rise. ".repeat(30);
+        let doc = add_document(&db, &project, "fit.txt", &[&big, &big, &big, &big]);
+
+        // Four ~1.9 KB excerpts cannot fit a 2048-token window alongside the
+        // prompts — llama-server would reject the request outright.
+        let mut req = ask_request(&project, AnalysisMode::Chat, "deltas", vec![doc]);
+        req.context_size = 2048;
+        req.max_tokens = 256;
+        let resp = ask(&db, &EchoProvider, &req).unwrap();
+
+        assert!(!resp.evidence.is_empty(), "at least one excerpt survives");
+        assert!(resp.evidence.len() < 4, "evidence trimmed to fit");
+        assert!(resp
+            .trace
+            .warnings
+            .iter()
+            .any(|w| w.contains("Context window")));
+        assert!(resp.answer.contains("[1]"), "the ask still completes");
     }
 
     #[test]

@@ -11,6 +11,34 @@ and the stamped section becomes the GitHub Release body.
 
 ## [Unreleased]
 
+### Added
+
+- **AI that works out of the box**: the installer now ships the whole
+  local AI stack — the llama.cpp `llama-server` runtime (pinned per-OS
+  CPU builds), a ready-to-run **Qwen3-0.6B Q4_K_M** starter model
+  (Apache-2.0, ~397 MB), and the **bge-small** embedding model. First
+  launch seeds the model into the library, activates it and enables AI
+  with zero setup; semantic search runs offline with no download. A
+  user-configured `llama-server` path or model in Settings still takes
+  precedence over the bundled runtime.
+- **Persistent embedding cache**: the embedding model now lives under
+  the app's data folder instead of `$TMPDIR`, which macOS periodically
+  wipes — that silently forced re-downloads and dropped search to the
+  hashing fallback while offline.
+- Build pipeline: `scripts/package/fetch-ai-assets.mjs` and
+  `packaging/seed_embeddings.py` fetch, pin and permission-normalise the
+  bundled assets; `release.yml` runs both before every installer build,
+  and `THIRD_PARTY_LICENSES.md` gains a bundled-assets section.
+
+### Fixed
+
+- **Ask prompts fit the model's context window**: a typical 12-excerpt
+  ask could exceed the 4096-token window, so llama-server rejected the
+  entire request ("request exceeds the available context size") and
+  Ask-AI failed on its first use. The prompt is now budgeted to the
+  configured window — excerpts are trimmed with a visible warning
+  instead of an error — and the default window is 8192 tokens.
+
 ## [0.1.3] - 2026-10-03
 
 Local acceptance testing of the v0.1.2 DMG caught a release-blocking

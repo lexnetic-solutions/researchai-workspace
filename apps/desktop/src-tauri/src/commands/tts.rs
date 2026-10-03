@@ -172,7 +172,10 @@ pub async fn tts_narrate(
         // (same flow as ai_ask, Phase 3).
         let ai = state.db.get_ai_settings()?;
         let model = resolve_model(&state.db, &ai)?;
-        let binary = std::path::PathBuf::from(&ai.llama_server_path);
+        let binary = crate::services::bundled::resolve_llama_binary(
+            &ai.llama_server_path,
+            state.resource_dir.as_deref(),
+        )?;
         if !matches!(
             state.llm_runtime.snapshot().state,
             crate::services::llm_runtime::LoadState::Ready { .. }

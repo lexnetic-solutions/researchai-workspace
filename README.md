@@ -22,8 +22,9 @@
 > (managed copy + checksum dedup) — parses PDF/DOCX/PPTX/XLSX/EPUB/HTML/TXT/MD
 > through the bundled local Python engine, answers searches with **hybrid retrieval**
 > (FTS5 keyword + fastembed/sqlite-vec vectors, debug panel), asks questions
-> with **grounded local AI** (GGUF models via llama.cpp, citation-only
-> answers), builds **cross-document evidence matrices**, formats **citations
+> with **grounded local AI** — a **Qwen3 starter model and the llama.cpp
+> runtime ship inside the installer**, so Ask-AI works with zero setup
+> (bring your own GGUF anytime; citation-only answers), builds **cross-document evidence matrices**, formats **citations
 > & bibliographies** (APA 7 · Harvard · Chicago), exports everything —
 > analyses, matrices, bibliographies — as **Markdown, DOCX, PDF, BibTeX and
 > RIS** into the managed workspace, **transcribes lecture recordings**
@@ -88,11 +89,12 @@ indexing); click a title to read the extracted text. Optional speech
 hybrid keyword + semantic retrieval — *Show retrieval debug* exposes
 channels, scores and index coverage for every query.
 
-Local AI (Phase 3): install
-[llama.cpp](https://github.com/ggml-org/llama.cpp) and put a small instruct
-GGUF (e.g. Qwen3 0.6B/1.7B Q4_K_M) somewhere on disk → Settings → **AI
-enabled** → Local AI: import the model, point the app at your `llama-server`
-binary, then open **Research AI** and ask — every answer cites the numbered
+Local AI works immediately: the installer bundles the `llama-server`
+runtime and a small **Qwen3-0.6B** model that first launch activates
+automatically (no downloads, fully offline). Prefer your own? Drop any
+instruct GGUF into Settings → **Local AI** and optionally point the app at
+your own `llama-server`
+binary — every answer cites the numbered
 library excerpts it was grounded in (see [docs/AI.md](docs/AI.md)).
 
 Frontend-only UI work in a browser:

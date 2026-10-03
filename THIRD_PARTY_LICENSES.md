@@ -49,12 +49,24 @@ by copying source trees into this repository.
 | pytest / httpx | Sidecar tests | MIT / BSD-3-Clause | github.com/pytest-dev/pytest |
 | uv | Python environment manager | MIT OR Apache-2.0 | github.com/astral-sh/uv |
 
+## Bundled AI assets (shipped inside the installer)
+
+| Component | Role | License | Source |
+|---|---|---|---|
+| llama.cpp `llama-server` | Local LLM inference runtime (per-OS CPU builds, pinned) | MIT | github.com/ggml-org/llama.cpp — LICENSE file ships beside the binary in `Resources/llama/` |
+| Qwen3-0.6B Q4_K_M (GGUF) | Starter instruct model for Ask-AI (~397 MB) | Apache-2.0 (weights) | huggingface.co/unsloth/Qwen3-0.6B-GGUF — base model Qwen/Qwen3-0.6B by Alibaba |
+| BAAI/bge-small-en-v1.5 | Semantic-search embeddings (ONNX via fastembed, ~90 MB) | MIT | huggingface.co/BAAI/bge-small-en-v1.5 |
+
+All three are fetched at build time by `scripts/package/fetch-ai-assets.mjs`
+and `services/document-engine/packaging/seed_embeddings.py` from their
+upstream sources — none of their code or weight files are committed to this
+repository. Versions/URLs are pinned in the fetch script.
+
 ## Planned — verify license at integration time (Phases 1–8)
 
 | Component | Planned role | License (verify) | Notes |
 |---|---|---|---|
 | Docling | Document parsing/OCR sidecar | MIT | github.com/docling-project/docling |
-| llama.cpp | Local LLM inference | MIT | GGUF models have their own licenses |
 | reportlab | PDF export rendering (document engine) | BSD-3-Clause | Permissive; no copyleft obligations |
 | whisper.cpp | Speech-to-text | MIT | Model weights (OpenAI) — MIT license; verify redistribution terms |
 | sqlite-vec | Vector search in SQLite | MIT OR Apache-2.0 | pre-v1 — isolated behind VectorStore interface (see Rust table for current usage) |

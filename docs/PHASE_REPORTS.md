@@ -987,3 +987,73 @@ bug no CI job could see: the installed app's bundled engine died at exec.
   logs `bundled sidecar healthy (pid …)`, `/health` answers from the
   app-owned child process (no external engine on the port), app bundle
   174 MB / DMG 69 MB with the full `_internal/` tree (40/40 entries).
+
+## Post-release round — bundled local AI stack (v0.1.4)
+
+Request: ship the AI model *inside* the product — "comes with the
+Products downloaded and install inside" — so Ask-AI and semantic search
+work offline on first launch with zero setup.
+
+- **Bundled assets (fetched at build time, never committed)**:
+  `scripts/package/fetch-ai-assets.mjs` pins llama.cpp `b11370`
+  per-OS CPU builds (smoke-tests `llama-server --version`; the macOS
+  build is dylib-based so every extracted file must sit **flat** beside
+  the binary) and the **Qwen3-0.6B-Q4_K_M** GGUF (396,705,472 B,
+  Apache-2.0); `packaging/seed_embeddings.py` seeds
+  **bge-small-en-v1.5** (MIT) via fastembed. `release.yml` gained two
+  steps (Fetch bundled AI assets, Seed embedding model) before every
+  installer build.
+- **Tauri resources**: three recursive dir entries in `tauri.conf.json`
+  (`sidecar/`, `llama/`, `models/`). tauri-build hard-fails when a
+  declared path is missing, so the dirs are tracked via `.gitkeep` (the
+  assets themselves are gitignored). HuggingFace downloads are
+  owner-read-only; tauri-build's `fs::copy` preserves modes, so the
+  second build truncating its own read-only copies dies with
+  `Permission denied` — both fetchers now normalise to owner-writable
+  (`chmodSync 0o644` / `_make_writable`). If it ever recurs:
+  `rm -rf target/<profile>/{models,llama,sidecar}` and rebuild.
+- **`services/bundled.rs`**: `resolve_llama_binary` (user path →
+  bundled → actionable error) now used by ask/evidence/tts commands;
+  `seed_bundled_models` runs before settings load — marker
+  `.bundled-seeded`, copies the embeddings cache, imports the GGUF only
+  into an empty model library, activates it and sets `ai_enabled` on
+  first run only.
+- **Embedding cache out of $TMPDIR**: engine reads
+  `RESEARCHAI_MODELS_DIR` (set by the supervisor) and uses
+  `<data>/models/embeddings` as the fastembed `cache_dir` — macOS no
+  longer wipes the model on reboot (offline hashing-fallback gone).
+- **First-run E2E (local release build installed to /Applications)**:
+  log shows `seeded embedding model`, `seeded bundled model
+  Qwen3-0.6B-Q4_K_M.gguf`, `bundled model active; AI enabled out of the
+  box`, `using bundled llama-server: …/Resources/llama/llama-server`;
+  live engine process has `RESEARCHAI_MODELS_DIR` in its env and the
+  cache lives in the data dir; `/health` OK.
+- **Context-budget fix found by E2E**: the first real Ask failed with
+  `request (4390 tokens) exceeds the available context size (4096)` —
+  llama-server rejects the *whole* request. `prepare_ask` now budgets
+  the prompt to `(context − max_tokens − 128) × 4 chars`, drops
+  excerpts from the end (last resort: truncate the first) and surfaces
+  a "Context window: kept N of M excerpts…" warning instead of an
+  error; default `context_size` 4096 → **8192** (stored 4096 installs
+  are covered by the budget).
+- **Live ask proof** with the bundled server, app-identical flags
+  (`--ctx-size 4096 -fa off --cache-reuse 256`): an oversized prompt
+  (17,523 tok) is rejected exactly as before the fix (the old failure
+  mode); a budgeted prompt (10,482 chars ≤ 11,776 budget) returns a
+  **cited answer `[1][2][3]` in 3.8 s**. Thinking mode stays on: with
+  `enable_thinking: false` the model stopped citing entirely; an empty
+  answer only appeared at `max_tokens 256` (thinking ate the budget) —
+  the app default is 1024.
+- **Local DMG gotcha**: `bundle_dmg.sh` fails at the final
+  `hdiutil detach` with `Resource busy` — Finder/Spotlight hold the
+  volume for a few seconds after the AppleScript `.DS_Store` dance, and
+  the script only retries exit 16. Transient: plain detach succeeds
+  seconds later; finish locally by detaching and running
+  `hdiutil convert rw.*.dmg -format UDZO -o <name>.dmg`. CI runners
+  (historically green) should be watched on the v0.1.4 legs.
+- **DMG verified**: 678,788,655 B (≈647 MB, matches the chosen "full
+  bundle" size), attaches read-only, `.app` 812 MB with
+  `Resources/{sidecar,llama×60,models/{Qwen3…gguf,embeddings}}`.
+- **Battery**: cargo **135** green (114 lib incl. the new trim test +
+  5 bundled tests, 20 contract, 1 live E2E), `tsc` clean, engine
+  `ruff` + `pytest` **36** green.

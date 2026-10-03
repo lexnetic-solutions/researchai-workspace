@@ -1115,8 +1115,10 @@ impl Default for AiSettings {
             active_model_id: None,
             llama_server_path: String::new(),
             llama_server_args: String::new(),
-            // 4096 fits the LIGHT profile budget alongside the OS + app.
-            context_size: 4096,
+            // 8192 keeps all 12 evidence excerpts of a typical ask inside
+            // the window on the LIGHT profile (KV cache for the bundled
+            // 0.6B starter model at 8K ≈ 240 MB).
+            context_size: 8192,
             max_tokens: 1024,
             temperature: 0.2,
             gpu_layers: 0,
@@ -1540,7 +1542,7 @@ pub(crate) mod tests {
     fn ai_settings_roundtrip() {
         let (_dir, db) = temp_db();
         let defaults = db.get_ai_settings().unwrap();
-        assert_eq!(defaults.context_size, 4096);
+        assert_eq!(defaults.context_size, 8192);
         assert!(defaults.active_model_id.is_none());
 
         let mut s = defaults;

@@ -42,7 +42,10 @@ pub async fn evidence_build(
             let ai = state.db.get_ai_settings()?;
             let model = resolve_available_model(&state, &ai)?;
             model_id = Some(model.id.clone());
-            let binary = std::path::PathBuf::from(&ai.llama_server_path);
+            let binary = crate::services::bundled::resolve_llama_binary(
+                &ai.llama_server_path,
+                state.resource_dir.as_deref(),
+            )?;
             if !matches!(state.llm_runtime.snapshot().state, LoadState::Ready { .. }) {
                 state.llm_runtime.ensure_loaded(
                     &binary,

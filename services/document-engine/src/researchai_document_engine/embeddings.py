@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import os
 import re
 from typing import Literal
 
@@ -72,7 +73,7 @@ class _FastembedBackend:
         try:
             from fastembed import TextEmbedding
 
-            self._model = TextEmbedding(model_name=_MODEL_NAME)
+            self._model = TextEmbedding(model_name=_MODEL_NAME, cache_dir=_cache_dir())
             logger.info("fastembed model loaded: %s", _MODEL_NAME)
             return True
         except Exception as exc:  # noqa: BLE001 — fallback must be resilient
@@ -83,6 +84,23 @@ class _FastembedBackend:
     def embed(self, texts: list[str]) -> list[list[float]]:
         assert self._model is not None
         return [list(map(float, v)) for v in self._model.embed(texts)]
+
+
+def _cache_dir() -> str | None:
+    """Persistent model cache under the app's data directory.
+
+    `RESEARCHAI_MODELS_DIR` is set by the desktop supervisor (and by the
+    packaged sidecar), so downloads land in the user-owned data folder
+    once and survive reboots/upgrades. When unset (dev, tests), return
+    None and let fastembed use its default — which is `$TMPDIR`: macOS
+    periodically wipes it, silently forcing a re-download and dropping
+    search to the hashing fallback while offline. Pre-seeded installs
+    copy the bundled model into this cache on first run (no network).
+    """
+    models_dir = os.environ.get("RESEARCHAI_MODELS_DIR")
+    if not models_dir:
+        return None
+    return os.path.join(models_dir, "embeddings")
 
 
 _backend = _FastembedBackend()

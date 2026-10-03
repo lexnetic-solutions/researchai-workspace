@@ -24,13 +24,22 @@
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost; media-src 'self' asset: http://asset.localhost; font-src 'self' data:",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPDATA/exports/*", "$APPDATA/transcribe/*"]
+        "scope": [
+          "$APPDATA/exports/*",
+          "$APPDATA/transcribe/*"
+        ]
       }
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["dmg", "app", "nsis", "appimage", "deb"],
+    "targets": [
+      "dmg",
+      "app",
+      "nsis",
+      "appimage",
+      "deb"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -40,17 +49,21 @@
     ],
     "category": "Productivity",
     "resources": {
-      "packaging/resources/sidecar/": "sidecar/"
+      "packaging/resources/sidecar/": "sidecar/",
+      "packaging/resources/llama/": "llama/",
+      "packaging/resources/models/": "models/"
     },
     "shortDescription": "Offline-first AI research workspace",
-    "longDescription": "Private, offline-first research intelligence: import papers, search and ask with citations, build evidence matrices, export academic artefacts, transcribe lectures and listen to spoken summaries — all on your machine.",
+    "longDescription": "Private, offline-first research intelligence: import papers, search and ask with citations, build evidence matrices, export academic artefacts, transcribe lectures and listen to spoken summaries \u2014 all on your machine.",
     "macOS": {
       "minimumSystemVersion": "11.0"
     },
     "windows": {
       "nsis": {
         "installMode": "both",
-        "languages": ["English"]
+        "languages": [
+          "English"
+        ]
       }
     }
   }

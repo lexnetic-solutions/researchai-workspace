@@ -45,5 +45,13 @@ apps/desktop/src-tauri/icons/ios/
 apps/desktop/src-tauri/packaging/resources/sidecar/researchai-engine
 apps/desktop/src-tauri/packaging/resources/sidecar/researchai-engine.exe
 apps/desktop/src-tauri/packaging/resources/sidecar/_internal/
+# Bundled AI assets from fetch-ai-assets.mjs / seed_embeddings.py
+# (llama-server binary, ~397 MB GGUF, ~90 MB embedding model). The
+# directories themselves are tracked via .gitkeep — Tauri's build script
+# hard-fails when a declared resource path doesn't exist.
+apps/desktop/src-tauri/packaging/resources/llama/*
+!apps/desktop/src-tauri/packaging/resources/llama/.gitkeep
+apps/desktop/src-tauri/packaging/resources/models/*
+!apps/desktop/src-tauri/packaging/resources/models/.gitkeep
 # PyInstaller work directory
 services/document-engine/build/

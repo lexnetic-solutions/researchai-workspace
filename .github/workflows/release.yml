@@ -84,6 +84,16 @@ jobs:
           RESEARCHAI_SIDECAR_MODE: binary
         run: node scripts/package/collect-sidecar.mjs
 
+      # Bundled AI: llama-server + starter GGUF (Apache-2.0) and the
+      # pre-fetched embedding cache, so search and Ask-AI work offline
+      # on first run. Pinned versions live in fetch-ai-assets.mjs.
+      - name: Fetch bundled AI assets (llama-server + starter GGUF)
+        run: node scripts/package/fetch-ai-assets.mjs
+
+      - name: Seed embedding model into packaging resources
+        working-directory: services/document-engine
+        run: uv run python packaging/seed_embeddings.py
+
       - name: Build frontend
         run: pnpm --filter @researchai/desktop build
 
