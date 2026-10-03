@@ -160,6 +160,8 @@ export interface ExportProgressEvent {
 export interface ImportSummary {
   readonly imported: number;
   readonly duplicates: number;
+  /** Unsupported files found inside imported folders (not failures). */
+  readonly skipped: number;
   readonly errors: readonly string[];
 }
 

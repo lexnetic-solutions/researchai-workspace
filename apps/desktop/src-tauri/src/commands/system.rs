@@ -98,11 +98,15 @@ pub async fn pick_folder(app: tauri::AppHandle) -> Option<String> {
     .flatten()
 }
 
+/// Native file picker for documents. The allow-list mirrors
+/// `services::ingestion::SUPPORTED`, so a user can only select types the
+/// document engine can actually parse.
 #[tauri::command]
 pub async fn pick_documents(app: tauri::AppHandle) -> Option<Vec<String>> {
     tauri::async_runtime::spawn_blocking(move || {
         app.dialog()
             .file()
+            .add_filter("Documents", crate::services::ingestion::SUPPORTED)
             .blocking_pick_files()
             .map(|paths| {
                 paths

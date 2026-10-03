@@ -13,11 +13,40 @@ and the stamped section becomes the GitHub Release body.
 
 ### Added
 
+- **Folder import**: the file picker's folder option now walks the selected
+  directory recursively (depth-capped, symlink-safe) and imports every
+  supported document — mixed selections of files and folders work in one
+  batch. Unsupported files are counted in the import summary
+  (`skipped`) instead of failing the run.
+- **PPTX, XLSX and EPUB parsing**: the document engine registers parsers
+  for the three formats the app already advertised — slides become
+  page-numbered sections, worksheets become sheet sections with
+  table blocks, EPUB chapters follow spine order with rebased offsets.
+- **Drag-and-drop import**: dropping documents onto the window imports
+  them into the active project (with a clear toast if none is selected),
+  and the document picker filters to supported extensions up front.
+- **Title-bar search**: the header search box is live — Enter seeds the
+  Search view and runs the query.
 - Release bodies now come from the stamped `CHANGELOG.md` section:
   `release.yml` extracts it via `scripts/release/extract-notes.sh`
   (shared with the dry-run's new fail-fast rehearsal step). A missing
   section falls back to a generic body — a release can no longer ship
   with empty notes the way v0.1.1 did before backfill.
+
+### Fixed
+
+- Selecting a **folder** to import no longer fails with "Not a regular
+  file" — directories are expanded before validation, and an empty
+  selection reports which formats are supported.
+- Importing pptx/xlsx/epub (and wav/mp3/m4a/mp4/mov/png/jpg, which are
+  media rather than documents) no longer reaches parse time only to be
+  rejected; media belongs to the Audio/reading workflows and the picker,
+  drop handler and folder walker all agree on the real allow-list.
+- Deleting a project now purges its managed document copies under
+  `documents/<project_id>/` instead of orphaning them on disk (link
+  originals were always untouched).
+- Stale "arrives in a later phase" copy removed from the Library, Notes
+  and Home views; the reader modal now states what this release does.
 
 ## [0.1.1] - 2026-10-03
 

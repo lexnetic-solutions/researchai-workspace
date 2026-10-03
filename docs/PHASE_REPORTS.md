@@ -893,3 +893,57 @@ pulls release notes from the changelog instead:
 Verified locally: extraction for `0.1.1` (38 lines, clean), `0.1.0`
 (footer excluded), missing version (empty → fallback path), plus both
 workflows parse via `yaml.safe_load` with steps in position.
+
+## Post-release round — document import bug hunt (folders, formats, drag-drop)
+
+A user reported the app **would not accept documents**. Investigation
+(evidence log + installed binary) showed single-PDF import actually worked —
+but three real gaps sat around it, any of which could produce an import that
+silently goes nowhere:
+
+- **Folder import was broken end-to-end.** The picker's folder option
+  returned a directory, which `validate_source` then rejected ("Not a
+  regular file"). No directory walking existed anywhere in the pipeline.
+- **The advertised format list outran the engine.** Rust's `SUPPORTED`
+  const offered pptx/xlsx/epub (+ media) while the Python engine
+  registered parsers only for pdf/docx/txt/md/html — those imports
+  reached parse time and failed with "not supported yet". Media files
+  aren't documents at all (transcription lives in AudioView).
+- **Dead import affordances.** Tauri emitted `tauri://drag-drop` with no
+  listener, the command-palette import item only toasted "lands in
+  Phase 1", and the picker had no extension filter.
+
+### Fixes
+
+- `services/ingestion.rs`: `SUPPORTED` narrowed to the nine document
+  formats, `expand_selection()` walks directories recursively
+  (`MAX_WALK_DEPTH=12`, skips dotfiles, never follows symlinks) and
+  returns `skipped_unsupported` alongside the files; 4 new tests cover
+  media rejection, the allow-list, folder walking and mixed/absent paths.
+- `commands/documents.rs`: `ImportSummary` gains `skipped`; per-file
+  failures are logged without killing the batch; an empty selection
+  reports the supported formats.
+- `commands/system.rs`: picker filters to `SUPPORTED`;
+  `commands/projects.rs`: `delete_project` purges its managed
+  `documents/<project_id>/` copies (FK cascade removed rows only).
+- Engine: new `parsers/office_extractors.py` — `parse_pptx`
+  (slide-numbered sections from slide XML), `parse_xlsx` (shared strings
+  + inline strings, sheet order from workbook.xml/rels, ` | `-joined rows
+  as table blocks), `parse_epub` (container.xml→OPF→spine order, OPF
+  title, chapters converted through the shared HTML→markdown path with
+  rebased offsets); `_md_structure`/`_html_to_markdown` extracted into
+  `text_extractors.py` for reuse.
+- UI: `App.tsx` consumes drag-drop (routes to Library + import request,
+  toast with project guidance when none is active), `DocumentsView`
+  consumes dropped paths via a sequenced import-request bus,
+  `CommandPalette` import actually imports, and the now-live title-bar
+  search box seeds the Search view.
+- Copy: stale "Phase 1/later phase" copy removed from Home/Notes/Library.
+
+### Verification
+
+- `cargo test`: **129/129 green, 0 warnings** (folder-walk, allow-list and
+  import-summary tests included); `cargo check` clean.
+- Engine: `pytest` green (incl. 8 new office-extraction tests and
+  registry locks for pptx/xlsx/epub), `ruff check` clean.
+- TS: `tsc --noEmit` clean; `vite build` clean.

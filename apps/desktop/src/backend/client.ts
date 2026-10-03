@@ -558,7 +558,7 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
           doc.chunkCount = 14;
         }, 2500);
       }
-      return { imported, duplicates: 0, errors: [] } as T;
+      return { imported, duplicates: 0, skipped: 0, errors: [] } as T;
     }
     case 'retry_document':
     case 'delete_document': {

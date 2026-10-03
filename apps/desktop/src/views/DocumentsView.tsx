@@ -25,7 +25,8 @@ function StatusBadge({ status }: { status: IngestionStage }) {
 }
 
 export function DocumentsView() {
-  const { activeProject, pushToast, settings, native } = useStore();
+  const { activeProject, pushToast, settings, native, importRequest, clearImportRequest } =
+    useStore();
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [importing, setImporting] = useState(false);
   const [reader, setReader] = useState<{ doc: DocumentSummary; text: string } | null>(null);
@@ -54,15 +55,21 @@ export function DocumentsView() {
     };
   }, [refresh, documents]);
 
-  async function runImport(kind: 'folder' | 'files') {
+  async function runImport(kind: 'folder' | 'files', dropped?: readonly string[] | null) {
     if (!activeProject) return;
     setImporting(true);
     try {
-      const picked =
-        kind === 'folder' ? await backend.pickFolder() : await backend.pickDocuments();
-      if (!picked) return;
-      const paths = Array.isArray(picked) ? picked : [picked];
-      if (paths.length === 0) return;
+      let paths: string[];
+      if (dropped && dropped.length > 0) {
+        // Drag & drop already gives us the paths — skip the picker.
+        paths = [...dropped];
+      } else {
+        const picked =
+          kind === 'folder' ? await backend.pickFolder() : await backend.pickDocuments();
+        if (!picked) return;
+        paths = Array.isArray(picked) ? picked : [picked];
+        if (paths.length === 0) return;
+      }
 
       const summary = await backend.importDocuments(
         activeProject.id,
@@ -73,6 +80,7 @@ export function DocumentsView() {
       const parts: string[] = [];
       if (summary.imported > 0) parts.push(`${summary.imported} imported`);
       if (summary.duplicates > 0) parts.push(`${summary.duplicates} duplicate(s) skipped`);
+      if (summary.skipped > 0) parts.push(`${summary.skipped} unsupported file(s) ignored`);
       if (summary.errors.length > 0) parts.push(`${summary.errors.length} failed`);
 
       if (summary.errors.length > 0) {
@@ -89,6 +97,17 @@ export function DocumentsView() {
       setImporting(false);
     }
   }
+
+  // Imports requested elsewhere in the app (drag & drop, command palette).
+  // The `seq` guard makes repeated identical requests re-trigger, and the
+  // request is consumed exactly once.
+  const handledSeq = useRef(0);
+  useEffect(() => {
+    if (!importRequest || importRequest.seq === handledSeq.current) return;
+    handledSeq.current = importRequest.seq;
+    clearImportRequest();
+    void runImport(importRequest.kind, importRequest.paths);
+  }, [importRequest]);
 
   async function openReader(doc: DocumentSummary) {
     try {
@@ -206,7 +225,7 @@ export function DocumentsView() {
       {documents.length === 0 ? (
         <EmptyState
           title="No documents yet"
-          hint="Import PDF, DOCX, PPTX, XLSX, MD, TXT or HTML files. Duplicates are detected by checksum and skipped automatically. Start the document engine (pnpm engine:run) so parsing can run."
+          hint="Import PDF, DOCX, PPTX, XLSX, EPUB, MD, TXT or HTML files — pick files, or import a whole folder (unsupported files inside are ignored). Duplicates are detected by checksum and skipped automatically. Parsing needs the document engine: the packaged app starts it automatically, in development run pnpm engine:run."
         />
       ) : (
         <ul className="doc-list">
@@ -398,7 +417,8 @@ export function DocumentsView() {
           </div>
           <p className="tiny muted">
             Extracted text ({reader.text.length.toLocaleString()} characters). The page-accurate
-            PDF viewer arrives in a later phase — page markers are preserved for citations.
+            PDF viewer is not part of this release — page markers are preserved for
+            citations.
           </p>
           <pre className="reader-text">{reader.text}</pre>
         </Modal>

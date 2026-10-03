@@ -145,10 +145,10 @@ export function ProjectsView() {
       {pendingDeleteProject && (
         <Modal title="Delete project?" onClose={() => setPendingDelete(null)}>
           <p>
-            This permanently removes the <strong>{pendingDeleteProject.name}</strong> project
-            record and its document links from the local database. Imported files in the
-            managed workspace are not erased in Phase 0; a full purge arrives with the
-            storage manager in Phase 1.
+            This permanently removes the <strong>{pendingDeleteProject.name}</strong> project,
+            its document records and the managed copies of its imported files from the
+            workspace. Files you imported with “link original” stay where they are on
+            disk.
           </p>
           <div className="modal-actions">
             <button type="button" className="btn ghost" onClick={() => setPendingDelete(null)}>

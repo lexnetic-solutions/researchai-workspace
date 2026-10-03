@@ -1,3 +1,6 @@
+import { useEffect } from 'react';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { TitleBar } from './components/TitleBar';
@@ -46,7 +49,39 @@ function CurrentView() {
 }
 
 export default function App() {
-  const { loading, backendError, view } = useStore();
+  const { loading, backendError, view, native, requestImport, setView, pushToast, activeProject } =
+    useStore();
+
+  // Drag & drop import: Tauri delivers native drops as events (the webview's
+  // own HTML5 drop is disabled), so without this listener dropped documents
+  // silently do nothing.
+  useEffect(() => {
+    if (!native) return;
+    let unlisten: UnlistenFn | undefined;
+    let disposed = false;
+    void getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (event.payload.type !== 'drop' || event.payload.paths.length === 0) return;
+        if (!activeProject) {
+          pushToast('error', 'Select or create a project before dropping documents in.');
+          setView('projects');
+          return;
+        }
+        setView('library');
+        requestImport('files', event.payload.paths);
+      })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {
+        /* drag events unavailable (browser preview) — nothing to clean up */
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [native, activeProject, requestImport, setView, pushToast]);
 
   return (
     <div className="app-shell">

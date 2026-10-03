@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 
 /**
- * Phase 0 scratchpad. The notes DB table (spec §12) lands with the document
- * model in Phase 1; until then this is a per-machine draft area so the
- * workflow is testable end-to-end without the parser.
+ * Scratchpad notes. Kept in app storage rather than the database so the
+ * workflow works with or without a project selected.
  */
 const DRAFT_KEY = 'researchai.notes.draft.v1';
 
@@ -24,7 +23,7 @@ export function NotesView() {
       <header className="view-head">
         <h1>Notes</h1>
         <p className="view-sub">
-          Free-form research notes. Structured, per-document notes arrive in Phase 1.
+          Free-form research notes, saved on this machine only.
         </p>
       </header>
       <div className="card grow">

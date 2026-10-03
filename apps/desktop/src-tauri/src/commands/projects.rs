@@ -25,6 +25,18 @@ pub fn create_project(
 #[tauri::command]
 pub fn delete_project(state: State<'_, AppState>, id: String) -> AppResult<()> {
     state.db.delete_project(&id)?;
+    // The DB cascade removes the document rows; the managed copies on disk
+    // would otherwise be orphaned forever (spec §13 workspace is ours to
+    // manage). Link-original files live outside the workspace and stay put.
+    let managed = state.data_dir.join("documents").join(&id);
+    if managed.is_dir() {
+        if let Err(e) = std::fs::remove_dir_all(&managed) {
+            log::warn!(
+                target: "researchai::projects",
+                "could not purge managed copies for {id}: {e}"
+            );
+        }
+    }
     log::info!(target: "researchai::projects", "deleted project {id}");
     Ok(())
 }

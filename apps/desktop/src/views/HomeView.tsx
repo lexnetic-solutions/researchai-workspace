@@ -175,10 +175,10 @@ export function HomeView() {
           <h2>Start here</h2>
           <ol className="steps">
             <li>Create a project for your thesis, coursework or review.</li>
-            <li>Import a folder of PDFs, DOCX, slides or notes (Phase 1).</li>
+            <li>Import a folder of PDFs, DOCX, slides or notes.</li>
             <li>Read, search and annotate your library.</li>
-            <li>Ask questions with traceable citations (Phase 3).</li>
-            <li>Export summaries and evidence matrices (Phase 6).</li>
+            <li>Ask questions with traceable citations.</li>
+            <li>Export summaries and evidence matrices.</li>
           </ol>
         </div>
 

@@ -109,36 +109,7 @@ def _parse_plaintext(path: str, ext: str) -> ParseResponse:
     sections: list[SectionSpan] = []
     blocks: list[ParsedBlock] = []
     if ext == "md":
-        # Markdown: use ATX headings as sections, group blocks under them.
-        # Offsets are character positions for stable citation mapping (§15).
-        sections.append(SectionSpan(heading="(Front matter)", level=1, order_index=0))
-        current_idx = 0
-        offset = 0
-        for raw_line in text.splitlines(keepends=True):
-            line = raw_line.rstrip("\n").rstrip("\r")
-            m = _MD_HEADING.match(line)
-            if m:
-                sections.append(
-                    SectionSpan(
-                        heading=m.group(2).strip() or "(Untitled)",
-                        level=len(m.group(1)),
-                        order_index=len(sections),
-                    )
-                )
-                current_idx = len(sections) - 1
-            elif line.strip():
-                # Extent excludes the newline so text[start:end] == text.
-                blocks.append(
-                    ParsedBlock(
-                        section_index=current_idx,
-                        kind="paragraph",
-                        text=line,
-                        page=None,
-                        start_offset=offset,
-                        end_offset=offset + len(line),
-                    )
-                )
-            offset += len(raw_line)
+        sections, blocks = _md_structure(text)
     else:
         sections.append(SectionSpan(heading="(Document)", level=1, order_index=0))
         offset = 0
@@ -165,22 +136,63 @@ def _parse_plaintext(path: str, ext: str) -> ParseResponse:
     return _ok(document_id, text, sections, blocks, page_count=None, title=title, ext=ext)
 
 
+def _md_structure(
+    text: str, front_matter: str | None = "(Front matter)"
+) -> tuple[list[SectionSpan], list[ParsedBlock]]:
+    """Markdown → sections (ATX headings) + paragraph blocks.
+
+    Offsets are character positions into `text` for stable citation mapping
+    (§15); a block's extent excludes its newline so `text[start:end] == text`.
+    `front_matter` is the section that content before the first heading lands
+    in; `None` suppresses it (the first heading then opens the document, which
+    is what an EPUB chapter that starts with its own title needs).
+    """
+    sections: list[SectionSpan] = []
+    blocks: list[ParsedBlock] = []
+    if front_matter is not None:
+        sections.append(SectionSpan(heading=front_matter, level=1, order_index=0))
+    current_idx = 0
+    offset = 0
+    for raw_line in text.splitlines(keepends=True):
+        line = raw_line.rstrip("\n").rstrip("\r")
+        m = _MD_HEADING.match(line)
+        if m:
+            sections.append(
+                SectionSpan(
+                    heading=m.group(2).strip() or "(Untitled)",
+                    level=len(m.group(1)),
+                    order_index=len(sections),
+                )
+            )
+            current_idx = len(sections) - 1
+        elif line.strip():
+            # Extent excludes the newline so text[start:end] == b.text.
+            blocks.append(
+                ParsedBlock(
+                    section_index=current_idx,
+                    kind="paragraph",
+                    text=line,
+                    page=None,
+                    start_offset=offset,
+                    end_offset=offset + len(line),
+                )
+            )
+        offset += len(raw_line)
+    return sections, blocks
+
+
 # ---------------------------------------------------------------------------
 # HTML (basic structural extraction; sanitisation happens in the UI layer)
 # ---------------------------------------------------------------------------
 
-@register("html")
-@register("htm")
-def parse_html(path: str) -> ParseResponse:
-    p = Path(path)
-    document_id = p.stem or "document"
-    try:
-        raw = _decode(p)
-    except ValueError as e:
-        return _error(document_id, str(e), "html")
 
-    # Minimal, dependency-free extraction: strip scripts/styles, convert
-    # headings to Markdown-ish markers so sections flow out of the same path.
+def _html_to_markdown(raw: str) -> str:
+    """Dependency-free HTML → Markdown-ish text.
+
+    Strips scripts/styles/head, converts headings to ATX markers so sections
+    flow out of the shared markdown path, and collapses the remaining tags to
+    whitespace. Shared by the `html` parser and the EPUB chapter reader.
+    """
     cleaned = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", "", raw)
     cleaned = re.sub(r"(?is)<head[^>]*>.*?</head>", "", cleaned)
     text = re.sub(r"(?is)<br\s*/?>", "\n", cleaned)
@@ -194,6 +206,20 @@ def parse_html(path: str) -> ParseResponse:
     text = re.sub(r"(?is)<[^>]+>", " ", text)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n\s+", "\n", text).strip()
+    return text
+
+
+@register("html")
+@register("htm")
+def parse_html(path: str) -> ParseResponse:
+    p = Path(path)
+    document_id = p.stem or "document"
+    try:
+        raw = _decode(p)
+    except ValueError as e:
+        return _error(document_id, str(e), "html")
+
+    text = _html_to_markdown(raw)
 
     # Route through the markdown parser for consistent sectioning.
     tmp = p.with_suffix(".md.tmp")

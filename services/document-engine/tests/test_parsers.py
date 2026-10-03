@@ -8,6 +8,10 @@ from researchai_document_engine import parsers
 def test_real_parsers_are_registered() -> None:
     registered = set(parsers.supported_now())
     assert {"pdf", "docx", "txt", "md", "html", "htm"} <= registered
+    # Stdlib ZIP+XML containers (office_extractors) must be registered too —
+    # the desktop allow-list already advertises them, so a gap here means a
+    # file imports cleanly and then fails at parse time.
+    assert {"pptx", "xlsx", "epub"} <= registered
 
 
 def test_planned_still_lists_phase1_targets() -> None:
@@ -18,6 +22,8 @@ def test_planned_still_lists_phase1_targets() -> None:
 def test_get_parser_dispatches_case_insensitively() -> None:
     assert parsers.get_parser("pdf") is not None
     assert parsers.get_parser("PDF") is not None
+    assert parsers.get_parser("pptx") is not None
+    assert parsers.get_parser("XLSX") is not None
     assert parsers.get_parser("xyz") is None
 
 

@@ -9,7 +9,7 @@ interface Command {
 }
 
 export function CommandPalette() {
-  const { setView, pushToast, native } = useStore();
+  const { setView, pushToast, native, requestImport, activeProject } = useStore();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -40,8 +40,13 @@ export function CommandPalette() {
       id: 'import-files',
       label: 'Import documents…',
       run: () => {
+        if (!activeProject) {
+          pushToast('error', 'Select or create a project before importing documents.');
+          setView('projects');
+          return;
+        }
         setView('library');
-        pushToast('info', 'Document import lands in Phase 1.');
+        requestImport('files');
       },
     },
     {

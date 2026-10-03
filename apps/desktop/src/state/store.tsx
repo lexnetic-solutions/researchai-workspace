@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -31,6 +32,17 @@ export interface Toast {
   readonly message: string;
 }
 
+/**
+ * A request to import documents, raised by any surface (drag & drop, the
+ * command palette) and consumed by the Library view, which owns the import
+ * pipeline and its refresh cycle. `paths: null` means "open the picker".
+ */
+export interface ImportRequest {
+  readonly seq: number;
+  readonly kind: 'files' | 'folder';
+  readonly paths: readonly string[] | null;
+}
+
 interface AppState {
   view: ViewId;
   setView: (view: ViewId) => void;
@@ -47,6 +59,15 @@ interface AppState {
   loading: boolean;
   backendError: string | null;
   native: boolean;
+  importRequest: ImportRequest | null;
+  requestImport: (
+    kind: ImportRequest['kind'],
+    paths?: readonly string[] | null,
+  ) => void;
+  clearImportRequest: () => void;
+  /** Query handed from the title bar to the Search view (null = none). */
+  searchSeed: string | null;
+  setSearchSeed: (q: string | null) => void;
 }
 
 const StoreContext = createContext<AppState | null>(null);
@@ -59,6 +80,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [loading, setLoading] = useState(true);
   const [backendError, setBackendError] = useState<string | null>(null);
+  const [importRequest, setImportRequest] = useState<ImportRequest | null>(null);
+  const [searchSeed, setSearchSeed] = useState<string | null>(null);
+  const importSeq = useRef(0);
+
+  const requestImport = useCallback(
+    (kind: ImportRequest['kind'], paths?: readonly string[] | null) => {
+      importSeq.current += 1;
+      setImportRequest({ seq: importSeq.current, kind, paths: paths ?? null });
+    },
+    [],
+  );
+
+  const clearImportRequest = useCallback(() => setImportRequest(null), []);
 
   const pushToast = useCallback((kind: Toast['kind'], message: string) => {
     const id = Date.now() + Math.floor(Math.random() * 1000);
@@ -117,6 +151,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     loading,
     backendError,
     native: isNative,
+    importRequest,
+    requestImport,
+    clearImportRequest,
+    searchSeed,
+    setSearchSeed,
   };
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

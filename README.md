@@ -18,7 +18,8 @@
 </p>
 
 > **Status: Phase 9 — Platform installers (final phase).** The app launches, manages projects,
-> imports documents (managed copy + checksum dedup), parses PDF/DOCX/TXT/MD/HTML
+> imports documents — files **or whole folders**, via picker or drag-and-drop
+> (managed copy + checksum dedup) — parses PDF/DOCX/PPTX/XLSX/EPUB/HTML/TXT/MD
 > through the bundled local Python engine, answers searches with **hybrid retrieval**
 > (FTS5 keyword + fastembed/sqlite-vec vectors, debug panel), asks questions
 > with **grounded local AI** (GGUF models via llama.cpp, citation-only

@@ -55,9 +55,13 @@ pub fn get_document_text(state: State<'_, AppState>, document_id: String) -> App
     state.db.get_document_text(&document_id)
 }
 
-/// Import files into a project. Non-fatal per-file problems are reported in
-/// the returned summary; a file that stops the whole batch does not exist —
-/// every failure is isolated (spec §14, §42).
+/// Import files/folders into a project. Non-fatal per-file problems are
+/// reported in the returned summary; a file that stops the whole batch does
+/// not exist — every failure is isolated (spec §14, §42).
+///
+/// Selected paths may be files *or* directories: folders are walked
+/// recursively for supported documents (spec §14 folder import), with
+/// unsupported files inside them counted as skipped rather than failed.
 #[tauri::command]
 pub fn import_documents(
     state: State<'_, AppState>,
@@ -65,18 +69,23 @@ pub fn import_documents(
     paths: Vec<String>,
     mode: String,
 ) -> AppResult<ImportSummary> {
+    if paths.is_empty() {
+        return Err(AppError::msg("No files were selected."));
+    }
+
     let effective_mode = if mode == "link-original" {
         "link-original"
     } else {
         "managed-copy"
     };
 
+    let selection = crate::services::ingestion::expand_selection(&paths);
+
     let mut imported = 0usize;
     let mut duplicates = 0usize;
     let mut errors: Vec<String> = Vec::new();
 
-    for raw in &paths {
-        let source = std::path::Path::new(raw);
+    for source in &selection.files {
         match crate::services::library::import_file(
             &state.db,
             &state.data_dir,
@@ -94,24 +103,35 @@ pub fn import_documents(
                 }
             }
             Err(e) => {
-                errors.push(format!(
-                    "{}: {e}",
-                    source
-                        .file_name()
-                        .map(|f| f.to_string_lossy().to_string())
-                        .unwrap_or_else(|| source.to_string_lossy().to_string())
-                ));
+                let name = source
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| source.to_string_lossy().to_string());
+                log::warn!(target: "researchai::ingestion", "import failed for {name}: {e}");
+                errors.push(format!("{name}: {e}"));
             }
         }
     }
 
-    if paths.is_empty() {
-        return Err(AppError::msg("No files were selected."));
+    // A folder that contained no importable document at all is a user-facing
+    // condition, not a silent no-op.
+    if selection.files.is_empty() {
+        if selection.skipped_unsupported > 0 {
+            return Err(AppError::msg(format!(
+                "None of the selected items are supported documents. Supported: {}.",
+                crate::services::ingestion::supported_list()
+            )));
+        }
+        return Err(AppError::msg(format!(
+            "No documents found in the selection. Supported: {}.",
+            crate::services::ingestion::supported_list()
+        )));
     }
 
     Ok(ImportSummary {
         imported,
         duplicates,
+        skipped: selection.skipped_unsupported,
         errors,
     })
 }
@@ -121,6 +141,8 @@ pub fn import_documents(
 pub struct ImportSummary {
     pub imported: usize,
     pub duplicates: usize,
+    /// Files inside selected folders that are not supported document types.
+    pub skipped: usize,
     pub errors: Vec<String>,
 }
 

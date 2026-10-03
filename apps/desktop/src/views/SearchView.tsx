@@ -7,10 +7,11 @@ import { useStore } from '../state/store';
 type Scope = 'library' | 'project' | 'document';
 
 export function SearchView() {
-  const { activeProject, pushToast, native } = useStore();
+  const { activeProject, pushToast, native, searchSeed, setSearchSeed } = useStore();
   const [query, setQuery] = useState('');
   const [scope, setScope] = useState<Scope>('project');
   const [scopeDocs, setScopeDocs] = useState<DocumentSummary[]>([]);
+  const [scopeLoaded, setScopeLoaded] = useState(false);
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [trace, setTrace] = useState<SearchResponseTrace | null>(null);
   const [searching, setSearching] = useState(false);
@@ -28,6 +29,8 @@ export function SearchView() {
       setScopeDocs(await backend.listDocuments(activeProject.id));
     } catch {
       /* non-fatal */
+    } finally {
+      setScopeLoaded(true);
     }
   }, [activeProject]);
 
@@ -59,6 +62,17 @@ export function SearchView() {
       setSearching(false);
     }
   }
+
+  // Apply a query handed over from the title bar (once the scope list is
+  // loaded so project-scoped ids resolve correctly), then clear the seed.
+  useEffect(() => {
+    if (!searchSeed || !scopeLoaded) return;
+    const q = searchSeed.trim();
+    setSearchSeed(null);
+    if (!q) return;
+    setQuery(q);
+    void runSearch(q);
+  }, [searchSeed, scopeLoaded]);
 
   // Debounced live search as the user types.
   function onInput(value: string) {

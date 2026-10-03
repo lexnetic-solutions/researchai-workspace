@@ -63,6 +63,11 @@ __all__ = [
     "supported_now",
 ]
 
-# Importing the extractor module registers the real Phase 1 parsers
-# (pdf, docx, txt, md, html, htm) with this registry.
+# `office_extractors` imports helpers from `text_extractors`, so it is
+# imported second; both registrations land either way.
+
+# Importing the extractor modules registers the real parsers with this
+# registry: pdf, docx, txt, md, html, htm (text_extractors) and
+# pptx, xlsx, epub (office_extractors — stdlib ZIP+XML containers).
+from . import office_extractors as _office_extractors  # noqa: F401
 from . import text_extractors as _text_extractors  # noqa: F401
