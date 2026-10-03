@@ -40,3 +40,10 @@ Thumbs.db
 # Phase 9 generated artefacts (rebuild with tauri icon / collect-sidecar)
 apps/desktop/src-tauri/icons/android/
 apps/desktop/src-tauri/icons/ios/
+# collect-sidecar output: frozen engine binary + PyInstaller _internal/
+# runtime (138 MB — never commit; rebuilt by CI and collect-sidecar.mjs)
+apps/desktop/src-tauri/packaging/resources/sidecar/researchai-engine
+apps/desktop/src-tauri/packaging/resources/sidecar/researchai-engine.exe
+apps/desktop/src-tauri/packaging/resources/sidecar/_internal/
+# PyInstaller work directory
+services/document-engine/build/

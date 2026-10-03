@@ -16,7 +16,7 @@
 import os
 import sys
 
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 SRC = os.path.abspath(os.path.join(SPECPATH, "..", "src"))
 
@@ -28,7 +28,10 @@ a = Analysis(
     [os.path.join(SRC, "researchai_document_engine", "run.py")],
     pathex=[SRC],
     binaries=[],
-    datas=collect_data_files("researchai_document_engine"),
+    datas=collect_data_files("researchai_document_engine")
+    # dist-info so importlib.metadata resolves the real package version
+    # in the frozen app (keeps /health honest against pyproject).
+    + copy_metadata("researchai-document-engine"),
     hiddenimports=["uvicorn.logging", "uvicorn.loops.auto", "uvicorn.protocols.http.auto"],
     hookspath=[],
     runtime_hooks=[],

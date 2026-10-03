@@ -947,3 +947,32 @@ silently goes nowhere:
 - Engine: `pytest` green (incl. 8 new office-extraction tests and
   registry locks for pptx/xlsx/epub), `ruff check` clean.
 - TS: `tsc --noEmit` clean; `vite build` clean.
+
+## Post-release round — packaged sidecar runtime fix (v0.1.3)
+
+Local acceptance testing of the **v0.1.2 DMG** caught a release-blocking
+bug no CI job could see: the installed app's bundled engine died at exec.
+
+- **Symptom**: app runs, `/health` never answers, log shows only the two
+  startup lines; the supervisor's spawned child sits as a `<defunct>`
+  zombie. The PyInstaller error: `Failed to load Python shared library
+  …/sidecar/_internal/Python`.
+- **Root cause**: the spec produces a **onedir** layout
+  (`dist/researchai-engine/{researchai-engine,_internal/}`) but
+  `collect-sidecar.mjs` copied **only the entry binary** into the Tauri
+  resources — the entire 138 MB Python runtime was never bundled (the
+  20 MB DMG was the tell). Masked until now because a dev engine on
+  8737 answered the supervisor's probe as `External`.
+- **Fixes**:
+  - `collect-sidecar.mjs` copies the sibling `_internal/` runtime
+    (and clears it on re-collect so it can never go stale).
+  - `engine_runtime.rs` detects instant child death via `try_wait`
+    during the health wait and logs it, plus a warning on the 30 s
+    timeout — both were silent before.
+  - Engine `__version__` now reads installed package metadata (dist-info
+    bundled via `copy_metadata()` in the spec) instead of a hardcoded
+    0.1.0; `/health` reports the true release version.
+  - `.gitignore` covers collected sidecar + PyInstaller `build/`.
+- **Verified locally**: frozen rebuild → collect → sidecar answers
+  `/health` with `version 0.1.2`; cargo 129/129 (live E2E running
+  against the frozen engine); engine ruff + pytest green.

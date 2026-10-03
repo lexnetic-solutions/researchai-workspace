@@ -13,7 +13,7 @@
 //   RESEARCHAI_SIDECAR_MODE=binary|fallback|skip node …
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -28,8 +28,17 @@ const mode = (process.env.RESEARCHAI_SIDECAR_MODE ?? 'auto').toLowerCase();
 mkdirSync(outDir, { recursive: true });
 
 // Clean previous artefacts (keep engine.env if the operator wrote one).
-for (const f of ['researchai-engine', 'researchai-engine.exe', 'researchai-engine-macos', 'researchai-engine-linux', 'researchai-engine-win.exe']) {
-  rmSync(join(outDir, f), { force: true });
+for (const f of [
+  'researchai-engine',
+  'researchai-engine.exe',
+  'researchai-engine-macos',
+  'researchai-engine-linux',
+  'researchai-engine-win.exe',
+  // PyInstaller onedir runtime (Python dylib, stdlib, libs) — must never
+  // go stale next to a freshly copied entry binary.
+  '_internal',
+]) {
+  rmSync(join(outDir, f), { recursive: true, force: true });
 }
 
 function sh(cmd, cwd) {
@@ -64,6 +73,15 @@ if (mode !== 'fallback' && mode !== 'skip') {
     );
     copyFileSync(src, dest);
     chmodSync(dest, 0o755);
+    // PyInstaller >= 6 onedir layout: the entry binary needs its sibling
+    // `_internal/` runtime (Python dylib, stdlib, libs) beside it — without
+    // it the sidecar dies at exec with "Failed to load Python shared
+    // library …/_internal/Python" on the user's machine.
+    const runtime = join(dirname(src), '_internal');
+    if (existsSync(runtime)) {
+      cpSync(runtime, join(outDir, '_internal'), { recursive: true });
+      console.log('[collect-sidecar] bundled _internal/ runtime (PyInstaller onedir)');
+    }
     console.log(`[collect-sidecar] bundled frozen binary: ${src}`);
     writeEnv();
     process.exit(0);

@@ -168,15 +168,41 @@ fn supervisor_loop(
             // Wait up to 30 s for /health; log-only on failure (the queue
             // retries parse jobs independently).
             let deadline = std::time::Instant::now() + Duration::from_secs(30);
+            let mut healthy = false;
+            let mut exited: Option<std::process::ExitStatus> = None;
             while std::time::Instant::now() < deadline {
                 if engine_client::health_ok() {
-                    log::info!(target: "researchai::engine", "bundled sidecar healthy (pid {pid})");
+                    healthy = true;
                     break;
+                }
+                // Surface an instant death (missing `_internal/` runtime,
+                // bad exec, …) instead of silently burning the timeout —
+                // this is exactly how a broken sidecar shipped once.
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        exited = Some(status);
+                        break;
+                    }
+                    Ok(None) => {}
+                    Err(_) => {}
                 }
                 if kill.load(Ordering::SeqCst) {
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(500));
+            }
+            if healthy {
+                log::info!(target: "researchai::engine", "bundled sidecar healthy (pid {pid})");
+            } else if let Some(status) = exited {
+                log::error!(
+                    target: "researchai::engine",
+                    "bundled sidecar exited immediately ({status}) — frozen runtime missing? expected `_internal/` beside the sidecar binary"
+                );
+            } else if !kill.load(Ordering::SeqCst) {
+                log::warn!(
+                    target: "researchai::engine",
+                    "bundled sidecar not healthy after 30s (pid {pid}) — engine still warming up or failed silently; check its output"
+                );
             }
 
             // Hold the supervisor open so Drop signalling stays simple.

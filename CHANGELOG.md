@@ -11,6 +11,25 @@ and the stamped section becomes the GitHub Release body.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Packaged engine runtime**: release builds shipped the PyInstaller
+  entry binary without its sibling `_internal/` directory (Python dylib,
+  stdlib, libs), so the bundled document engine died at exec on every
+  installed copy ("Failed to load Python shared library …/_internal/Python")
+  and no installed app could parse anything. `collect-sidecar.mjs` now
+  copies the runtime beside the binary. The bug was masked during
+  testing by an externally started dev engine answering on the same port.
+- The engine supervisor now logs an instant sidecar death and a
+  health-wait timeout instead of failing silently — a broken sidecar is
+  diagnosable from `researchai-*.log` instead of an empty one.
+- `/health` reports the real engine version from package metadata (the
+  dist-info is bundled into the freeze) instead of a hardcoded 0.1.0
+  that drifted from every release.
+- Generated sidecar/PyInstaller artefacts (`_internal/`, collected
+  binaries, `build/`) are git-ignored so the 138 MB runtime can never be
+  committed.
+
 ## [0.1.2] - 2026-10-03
 
 Second post-release round: the import path is fixed end-to-end — folder
