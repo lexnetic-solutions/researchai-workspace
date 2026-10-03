@@ -11,6 +11,12 @@ and the stamped section becomes the GitHub Release body.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-03
+
+Second post-release round: the import path is fixed end-to-end — folder
+selection, drag-and-drop, and the Office/EPUB formats the app advertised
+but the engine could not yet parse.
+
 ### Added
 
 - **Folder import**: the file picker's folder option now walks the selected
@@ -112,6 +118,7 @@ Initial release: the complete private, offline-first research workspace
   AppImage and deb installers; Apple signing activates when secrets are
   configured.
 
-[Unreleased]: https://github.com/pathway-solutions/researchai-workspace/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/pathway-solutions/researchai-workspace/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/pathway-solutions/researchai-workspace/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/pathway-solutions/researchai-workspace/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/pathway-solutions/researchai-workspace/releases/tag/v0.1.0
