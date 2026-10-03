@@ -92,8 +92,13 @@ Operations notes:
 
 1. Verify `main` is green at job level (all 4 desktop targets).
 2. Cut the tag: `git tag v0.1.x <sha> && git push origin v0.1.x`.
-3. `release.yml` builds and attaches installers to the GitHub release
-   (created as a draft by the workflow; publish with release notes).
+3. `release.yml` builds and attaches installers to the GitHub release.
+   The release is **published directly** (not a draft), and its body is
+   extracted from the stamped `CHANGELOG.md` section for the tag by
+   `scripts/release/extract-notes.sh` — so stamp the changelog
+   (`release-bump` skill) *before* tagging. A missing section falls back
+   to a generic body (never an empty one) and the dry-run rehearses the
+   extraction step.
 4. Expected assets: `aarch64.dmg`, `x64.dmg` (macos-13, may lag hours),
    `x64-setup.exe`, `amd64.AppImage`, `amd64.deb`.
 5. Watch asset attachment at job level; the macos-13 job finishing *after* you

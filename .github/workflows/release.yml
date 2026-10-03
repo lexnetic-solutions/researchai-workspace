@@ -12,7 +12,9 @@ on:
 
 # A dry-run rehearsal of this pipeline (no release attach, empty
 # permissions) lives in release-dry-run.yml — run it when touching the
-# packaging inputs before spending a real tag.
+# packaging inputs before spending a real tag. The release body is
+# extracted from the stamped CHANGELOG section for the tag
+# (scripts/release/extract-notes.sh; rehearsal step in the dry-run).
 permissions:
   contents: write
 
@@ -129,9 +131,28 @@ jobs:
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
 
+      # The release body comes from the stamped CHANGELOG section for this
+      # tag (release-bump stamps it before tagging). An empty extraction
+      # falls back to a generic body so a release never ships with an
+      # empty notes field again (v0.1.1 did before the backfill).
+      - name: Extract release notes from CHANGELOG
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `|| true`: any extractor failure (e.g. missing CHANGELOG) must
+          # degrade to the fallback body, never block attaching installers.
+          scripts/release/extract-notes.sh "$GITHUB_REF_NAME" > release-notes.md || true
+          if [ ! -s release-notes.md ]; then
+            echo "::warning::no stamped CHANGELOG section for $GITHUB_REF_NAME — using fallback body"
+            printf 'See [CHANGELOG.md](https://github.com/%s/blob/%s/CHANGELOG.md) for the full history.\n' \
+              "$GITHUB_REPOSITORY" "$GITHUB_SHA" > release-notes.md
+          fi
+          echo "Release notes: $(wc -l < release-notes.md) lines"
+
       - name: Attach to GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: release-notes.md
           files: |
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe

@@ -11,6 +11,14 @@ and the stamped section becomes the GitHub Release body.
 
 ## [Unreleased]
 
+### Added
+
+- Release bodies now come from the stamped `CHANGELOG.md` section:
+  `release.yml` extracts it via `scripts/release/extract-notes.sh`
+  (shared with the dry-run's new fail-fast rehearsal step). A missing
+  section falls back to a generic body — a release can no longer ship
+  with empty notes the way v0.1.1 did before backfill.
+
 ## [0.1.1] - 2026-10-03
 
 First post-release hardening round: the desktop app got faster, more

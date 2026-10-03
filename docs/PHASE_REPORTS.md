@@ -867,3 +867,29 @@ Verified: cargo battery 125/125 (104 lib — 2 new splitter tests — + 20
 locks + 1 E2E), 0 warnings; `tsc --noEmit` and vite build clean.
 Known gaps unchanged: v0.1.1 assets are ad-hoc signed (Apple secrets
 gated/ready), macos-13 still queued, real-hardware validation pending.
+
+## Post-release round — release bodies from the CHANGELOG
+
+v0.1.1 shipped with an **empty release body** (the workflow publishes
+directly and never set one; it was backfilled by hand). The pipeline now
+pulls release notes from the changelog instead:
+
+- **`scripts/release/extract-notes.sh`** — extracts the stamped
+  `## [X.Y.Z]` section for a tag from `CHANGELOG.md`. Stops at the next
+  heading *and* at the reference-link footer, so a last-version section
+  never leaks future-version links. Empty output = no such section.
+- **`release.yml`** — new "Extract release notes from CHANGELOG" step
+  feeds `body_path` on the attach action. Any extractor failure degrades
+  to a generic CHANGELOG-pointer body with a `::warning::` — installers
+  must never be blocked, and a release can never ship with empty notes.
+- **`release-dry-run.yml`** — new fail-fast rehearsal step (first after
+  checkout, before PyInstaller) asserts the newest stamped section
+  extracts non-empty with no heading/footer bleed; the script and
+  `CHANGELOG.md` are now dry-run path triggers.
+- Docs: `release-bump` skill documents stamp-before-tag as mandatory and
+  how to verify the body landed; OPERATIONS §3 corrected (release is
+  published directly, not a draft) and now describes the body flow.
+
+Verified locally: extraction for `0.1.1` (38 lines, clean), `0.1.0`
+(footer excluded), missing version (empty → fallback path), plus both
+workflows parse via `yaml.safe_load` with steps in position.

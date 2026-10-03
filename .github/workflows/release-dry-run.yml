@@ -20,6 +20,8 @@ on:
       - '.github/workflows/release.yml'
       - '.github/workflows/release-dry-run.yml'
       - 'scripts/package/collect-sidecar.mjs'
+      - 'scripts/release/extract-notes.sh'
+      - 'CHANGELOG.md'
       - 'services/document-engine/packaging/pyinstaller.spec'
       - 'services/document-engine/src/researchai_document_engine/run.py'
       - 'apps/desktop/src-tauri/tauri.conf.json'
@@ -51,6 +53,29 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      # Rehearse release.yml's notes extraction FIRST (cheap, fail-fast):
+      # the newest stamped CHANGELOG section must extract cleanly —
+      # non-empty, no headings, no reference-link footer. A changelog that
+      # cannot satisfy this would publish a bad release body, so fail here
+      # before spending minutes on PyInstaller + Tauri.
+      - name: Verify CHANGELOG notes extraction (rehearsal)
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER=$(grep -m1 -E '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' CHANGELOG.md \
+            | sed -E 's/^## \[([^]]+)\].*/\1/' || true)
+          test -n "$VER" || { echo "::error::no stamped section in CHANGELOG.md"; exit 1; }
+          scripts/release/extract-notes.sh "$VER" > release-notes.md
+          test -s release-notes.md || {
+            echo "::error::extraction for [$VER] produced an empty body"; exit 1; }
+          if grep -q '^## \[' release-notes.md; then
+            echo "::error::extracted body contains a heading (section bleed)"; exit 1
+          fi
+          if grep -q '^\[[^]]\+\]:' release-notes.md; then
+            echo "::error::extracted body contains the link footer (footer bleed)"; exit 1
+          fi
+          echo "Extraction OK for [$VER]: $(wc -l < release-notes.md) lines"
 
       - name: Install Linux system dependencies (Tauri)
         if: runner.os == 'Linux'

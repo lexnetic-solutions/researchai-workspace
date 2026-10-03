@@ -99,6 +99,11 @@ files and release workflow.
 
 9. **Confirm assets** carry the new version name (they are built from
    `tauri.conf.json`), e.g. `ResearchAI.Workspace_0.1.2_aarch64.dmg`.
+10. **Confirm the release body** came from your stamped section:
+   `gh release view vX.Y.Z --json body --jq '.body | length'` —
+   non-zero means `scripts/release/extract-notes.sh` found the section;
+   zero means it fell back (your stamp was missing or misspelled — fix
+   with `gh release edit vX.Y.Z --notes-file <file>`).
 
 ## Error Recovery
 
@@ -117,3 +122,8 @@ files and release workflow.
   `git push origin main --follow-tags`.
 - The release is published immediately (isDraft: false) — a pushed tag IS
   the release. Treat tagging as the point of no return.
+- The release body is extracted from the stamped `CHANGELOG.md` section
+  by `scripts/release/extract-notes.sh` inside `release.yml` — this is
+  why stamping the changelog in step 3 is mandatory, not optional. The
+  dry-run workflow rehearses the same extraction against the newest
+  stamped section.
