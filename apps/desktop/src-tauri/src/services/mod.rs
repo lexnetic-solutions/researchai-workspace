@@ -16,6 +16,7 @@ pub mod library;
 pub mod llm_runtime;
 pub mod model_manager;
 pub mod narration;
+pub mod path_validation;
 pub mod projects;
 pub mod queue;
 pub mod retrieval;

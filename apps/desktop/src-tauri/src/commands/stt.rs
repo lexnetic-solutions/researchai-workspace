@@ -63,7 +63,16 @@ pub fn stt_save_settings(
     state: State<'_, AppState>,
     settings: crate::db::SttSettings,
 ) -> AppResult<crate::db::SttSettings> {
-    let mut s = settings;
+    let s = prepare_stt_settings(settings)?;
+    state.db.save_stt_settings(&s)?;
+    Ok(s)
+}
+
+/// Normalize and validate saved STT settings (kept free of Tauri state so
+/// the guards are unit-testable). The picker is unfiltered, so picking the
+/// recording you want to transcribe *as* whisper-cli is the classic mistake
+/// — reject it here with guidance instead of failing silently at job time.
+fn prepare_stt_settings(mut s: crate::db::SttSettings) -> AppResult<crate::db::SttSettings> {
     s.whisper_cli_path = s.whisper_cli_path.trim().to_string();
     s.whisper_model_path = s.whisper_model_path.trim().to_string();
     let lang = s.language.trim();
@@ -72,8 +81,59 @@ pub fn stt_save_settings(
     } else {
         lang.to_ascii_lowercase()
     };
-    state.db.save_stt_settings(&s)?;
+    crate::services::path_validation::validate_binary_path(
+        &s.whisper_cli_path,
+        "whisper-cli",
+        "build whisper.cpp and point at its whisper-cli binary, e.g. \
+         /opt/whisper.cpp/build/bin/whisper-cli",
+    )?;
+    crate::services::path_validation::validate_model_path(
+        &s.whisper_model_path,
+        "a whisper GGML model",
+        "bin",
+    )?;
     Ok(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saving_a_recording_as_whisper_cli_is_rejected() {
+        let err = prepare_stt_settings(crate::db::SttSettings {
+            whisper_cli_path: "/Users/odere/Downloads/take_I.wav".into(),
+            ..crate::db::SttSettings::default()
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("audio/video file"), "got: {err}");
+        assert!(err.contains("whisper-cli"), "got: {err}");
+    }
+
+    #[test]
+    fn saving_a_whisper_model_with_the_wrong_extension_is_rejected() {
+        let err = prepare_stt_settings(crate::db::SttSettings {
+            whisper_model_path: "/models/voice.onnx".into(),
+            ..crate::db::SttSettings::default()
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains(".bin"), "got: {err}");
+    }
+
+    #[test]
+    fn unset_and_well_formed_paths_save() {
+        let s = prepare_stt_settings(crate::db::SttSettings::default()).unwrap();
+        assert_eq!(s.language, "auto");
+        let s = prepare_stt_settings(crate::db::SttSettings {
+            whisper_cli_path: "  /opt/whisper.cpp/build/bin/whisper-cli  ".into(),
+            whisper_model_path: "/opt/whisper.cpp/models/ggml-base.bin".into(),
+            ..crate::db::SttSettings::default()
+        })
+        .unwrap();
+        assert_eq!(s.whisper_cli_path, "/opt/whisper.cpp/build/bin/whisper-cli");
+    }
 }
 
 /// Result of one transcription job (Phase 7).

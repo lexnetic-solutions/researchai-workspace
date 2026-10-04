@@ -306,6 +306,16 @@ export function AudioView() {
         ) : (
           <p className="tiny muted">Checking…</p>
         )}
+        {tts && !tts.ready && (
+          <p className="tiny muted" style={{ marginTop: '0.5rem' }}>
+            No voice is ready yet, so rendering is disabled. On macOS the built-in voice works
+            with zero setup — pick it under{' '}
+            <button type="button" className="link" onClick={() => setView('settings')}>
+              Settings → Speech
+            </button>{' '}
+            (Voice output → macOS say), or point Piper at a binary and voice model there.
+          </p>
+        )}
 
         <div className="field-row" style={{ marginTop: '0.5rem' }}>
           <select

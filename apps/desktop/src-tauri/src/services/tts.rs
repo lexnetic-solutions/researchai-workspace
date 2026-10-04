@@ -1617,6 +1617,28 @@ mod tests {
         assert_eq!(audio.duration_ms, 1000);
     }
 
+    /// Live render through the real `say` binary — proves audio bytes are
+    /// actually produced on macOS (the zero-install fallback path used when
+    /// Piper is unconfigured). Skips when `say` is unavailable.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn live_say_renders_a_real_wav() {
+        let dir = TempDir::new_with_label("tts-say-live");
+        let out_dir = dir.path().join("out");
+        let prov = MacOsSayProvider::new(String::new(), 1.0, false, &out_dir);
+        if !prov.check().ready {
+            return; // `say` missing in this environment — nothing to prove
+        }
+        let audio = prov.render("Testing audio generation.", "live-say").unwrap();
+        assert_eq!(audio.format, "wav");
+        assert!(std::path::Path::new(&audio.path).exists());
+        let on_disk = std::fs::metadata(&audio.path).unwrap().len();
+        assert_eq!(audio.bytes, on_disk);
+        // "Testing audio generation." ≈ 1 s of speech; even a very short
+        // utterance must yield a parseable RIFF header with a real duration.
+        assert!(audio.duration_ms > 0, "got {} ms", audio.duration_ms);
+    }
+
     #[test]
     fn provider_for_selects_by_settings() {
         let dir = TempDir::new_with_label("tts");

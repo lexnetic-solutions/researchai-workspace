@@ -8,6 +8,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::services::ai::AiProvider as _;
+use crate::services::tts::TextToSpeechProvider as _;
 
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
@@ -28,9 +29,10 @@ pub struct TtsStatusResponse {
 fn status_response(state: &AppState) -> AppResult<TtsStatusResponse> {
     let s = state.db.get_tts_settings()?;
     let out_dir = state.data_dir.join("exports");
-    let st = crate::services::tts::provider_for(&s, out_dir)?.check();
+    let (provider, effective) = effective_provider(&s, out_dir)?;
+    let st = provider.check();
     Ok(TtsStatusResponse {
-        provider: s.provider.clone(),
+        provider: effective,
         binary_found: st.binary_found,
         model_found: st.model_found,
         ffmpeg_found: crate::services::transcription::ffmpeg_available(),
@@ -38,6 +40,37 @@ fn status_response(state: &AppState) -> AppResult<TtsStatusResponse> {
         output_dir: st.output_dir,
         settings: s,
     })
+}
+
+/// The provider that will actually render, plus its id (`"piper"` |
+/// `"macos-say"`) for status and UI labels.
+///
+/// Normally this is the saved selection. When Piper is selected but not
+/// usable — binary or voice model missing, the classic half-configured
+/// install — the built-in macOS `say` voice takes over on macOS so audio
+/// generation works with zero setup (spec §47.7 fallback voice). Status and
+/// both render commands go through this one function, so what the UI reports
+/// as ready is exactly what renders.
+fn effective_provider(
+    s: &crate::db::TtsSettings,
+    out_dir: std::path::PathBuf,
+) -> AppResult<(Box<dyn crate::services::tts::TextToSpeechProvider>, String)> {
+    let selected = crate::services::tts::provider_for(s, out_dir.clone())?;
+    if selected.check().ready {
+        return Ok((selected, s.provider.clone()));
+    }
+    #[cfg(target_os = "macos")]
+    if s.provider != "macos-say" {
+        let say = crate::services::tts::MacOsSayProvider::from_settings(s, out_dir);
+        if say.check().ready {
+            log::info!(
+                target: "researchai::tts",
+                "piper selected but not ready — falling back to the built-in macOS say voice"
+            );
+            return Ok((Box::new(say), "macos-say".into()));
+        }
+    }
+    Ok((selected, s.provider.clone()))
 }
 
 #[tauri::command]
@@ -55,7 +88,14 @@ pub fn tts_save_settings(
     state: State<'_, AppState>,
     settings: crate::db::TtsSettings,
 ) -> AppResult<crate::db::TtsSettings> {
-    let mut s = settings;
+    let s = prepare_tts_settings(settings)?;
+    state.db.save_tts_settings(&s)?;
+    Ok(s)
+}
+
+/// Normalize and validate saved TTS settings (kept free of Tauri state so
+/// the guards above are unit-testable).
+fn prepare_tts_settings(mut s: crate::db::TtsSettings) -> AppResult<crate::db::TtsSettings> {
     s.provider = if s.provider == "macos-say" {
         "macos-say".into()
     } else {
@@ -65,7 +105,21 @@ pub fn tts_save_settings(
     s.voice_model_path = s.voice_model_path.trim().to_string();
     s.macos_voice = s.macos_voice.trim().to_string();
     s.speed = s.speed.clamp(0.5, 2.0);
-    state.db.save_tts_settings(&s)?;
+    // Piper fields are only validated while Piper is the selected provider —
+    // switching to the macOS voice must stay possible with stale paths set.
+    if s.provider == "piper" {
+        crate::services::path_validation::validate_binary_path(
+            &s.piper_path,
+            "piper",
+            "install it (e.g. `brew install piper`) and point at the executable, e.g. \
+             /opt/homebrew/bin/piper",
+        )?;
+        crate::services::path_validation::validate_model_path(
+            &s.voice_model_path,
+            "a Piper voice model",
+            "onnx",
+        )?;
+    }
     Ok(s)
 }
 
@@ -135,8 +189,8 @@ fn speak_document_inner(state: &AppState, document_id: &str) -> AppResult<Narrat
     let script = crate::services::narration::speakable(&doc_text);
     let words = script.split_whitespace().count();
     let hint = sanitize_hint(&title);
-    let audio = crate::services::tts::provider_for(&s, state.data_dir.join("exports"))?
-        .render(&script, &hint)?;
+    let (voice, _) = effective_provider(&s, state.data_dir.join("exports"))?;
+    let audio = voice.render(&script, &hint)?;
     Ok(NarrationResult::from_audio(audio, words, "read_aloud".into()))
 }
 
@@ -220,8 +274,8 @@ pub async fn tts_narrate(
         let hint = sanitize_hint(&title);
 
         let tts = state.db.get_tts_settings()?;
-        let audio = crate::services::tts::provider_for(&tts, state.data_dir.join("exports"))?
-            .render(&script, &format!("{}-{hint}", kind_slug(kind)))?;
+        let (voice, _) = effective_provider(&tts, state.data_dir.join("exports"))?;
+        let audio = voice.render(&script, &format!("{}-{hint}", kind_slug(kind)))?;
         Ok(NarrationResult::from_audio(
             audio,
             words,
@@ -271,5 +325,80 @@ fn kind_slug(kind: crate::services::narration::NarrationKind) -> String {
         crate::services::narration::NarrationKind::Summary10 => "summary-10min".into(),
         crate::services::narration::NarrationKind::Summary20 => "summary-20min".into(),
         crate::services::narration::NarrationKind::Podcast => "podcast".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fully configured Piper (binary + voice present) must stay selected.
+    #[cfg(unix)]
+    #[test]
+    fn configured_piper_stays_piper() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = crate::db::tests::TempDir::new_with_label("tts-eff");
+        let bin = dir.path().join("piper");
+        std::fs::write(&bin, b"#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let model = dir.path().join("en_US-amy-medium.onnx");
+        std::fs::write(&model, b"onnx").unwrap();
+
+        let s = crate::db::TtsSettings {
+            provider: "piper".into(),
+            piper_path: bin.to_string_lossy().into_owned(),
+            voice_model_path: model.to_string_lossy().into_owned(),
+            ..crate::db::TtsSettings::default()
+        };
+        let (prov, id) = effective_provider(&s, dir.path().join("out")).unwrap();
+        assert_eq!(id, "piper");
+        assert!(prov.check().ready);
+    }
+
+    /// Unconfigured Piper on macOS falls back to the zero-install `say`
+    /// voice so "Render audio" works out of the box.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn unconfigured_piper_falls_back_to_the_macos_voice() {
+        let dir = crate::db::tests::TempDir::new_with_label("tts-fb");
+        let s = crate::db::TtsSettings {
+            provider: "piper".into(),
+            ..crate::db::TtsSettings::default()
+        };
+        let (prov, id) = effective_provider(&s, dir.path().join("out")).unwrap();
+        if id != "macos-say" {
+            // `say` unavailable in this environment — nothing to assert.
+            return;
+        }
+        assert!(prov.check().ready);
+    }
+
+    /// Saving a recording as the piper binary is rejected with guidance
+    /// instead of silently disabling audio generation.
+    #[test]
+    fn saving_an_audio_file_as_the_piper_binary_is_rejected() {
+        let err = prepare_tts_settings(crate::db::TtsSettings {
+            provider: "piper".into(),
+            piper_path: "/Users/odere/Downloads/take_I.wav".into(),
+            ..crate::db::TtsSettings::default()
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("audio/video file"), "got: {err}");
+        assert!(err.contains("piper"), "got: {err}");
+    }
+
+    /// The same settings save cleanly once Piper is deselected — switching
+    /// to the macOS voice must never be blocked by stale Piper paths.
+    #[test]
+    fn macos_say_selection_skips_piper_path_validation() {
+        let saved = prepare_tts_settings(crate::db::TtsSettings {
+            provider: "macos-say".into(),
+            piper_path: "/Users/odere/Downloads/take_I.wav".into(),
+            ..crate::db::TtsSettings::default()
+        })
+        .unwrap();
+        assert_eq!(saved.provider, "macos-say");
     }
 }

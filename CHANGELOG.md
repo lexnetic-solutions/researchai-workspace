@@ -11,6 +11,19 @@ and the stamped section becomes the GitHub Release body.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Audio generation works out of the box on macOS**: the "Render audio"
+  button was dead for anyone who had not installed Piper — and the
+  unfiltered file pickers in Settings → Speech made it easy to save a
+  recording *as* the `piper`/`whisper-cli` binary, which silently left the
+  voice "not ready". Speech settings now reject audio files, folders and
+  non-executable paths at save time with actionable copy, and when Piper is
+  selected but unusable the built-in macOS `say` voice takes over (status
+  and both render commands share the same provider resolution, so what the
+  UI reports as ready is exactly what renders). The Audio tab explains how
+  to enable a voice when none is ready.
+
 ## [0.1.4] - 2026-10-04
 
 ### Added
