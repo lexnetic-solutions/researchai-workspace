@@ -4,10 +4,10 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/app-icon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost; font-src 'self' data:"
-    />
+    <!-- The authoritative CSP is served by Tauri from tauri.conf.json
+         (app.security.csp) as a response header in the packaged app. A
+         duplicate meta CSP here used to drift from it — with no media-src
+         its default-src 'self' blocked every audio load — so never add one. -->
     <title>ResearchAI Workspace</title>
   </head>
   <body>

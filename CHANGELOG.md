@@ -13,6 +13,17 @@ and the stamped section becomes the GitHub Release body.
 
 ### Fixed
 
+- **In-app audio playback works**: renders succeeded but the built-in
+  player only showed "Error" (MEDIA_ERR_SRC_NOT_SUPPORTED on every load).
+  `index.html` shipped a second, older CSP as a `<meta>` tag with no
+  `media-src` directive — CSP policies are conjunctive, so its
+  `default-src 'self'` blocked all `asset://` and `blob:` media even
+  though the authoritative header CSP from `tauri.conf.json` allowed it.
+  The duplicate meta CSP is gone (single source of truth:
+  `app.security.csp`), playback failures now land in the app log with the
+  MediaError code (plus an actionable toast instead of a silent "Error"),
+  and a startup self-check records the page origin, the enforced CSP, any
+  duplicate meta CSP, and whether a narration file loads.
 - **Audio generation works out of the box on macOS**: the "Render audio"
   button was dead for anyone who had not installed Piper — and the
   unfiltered file pickers in Settings → Speech made it easy to save a

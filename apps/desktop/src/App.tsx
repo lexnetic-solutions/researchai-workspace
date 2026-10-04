@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import type { UnlistenFn } from '@tauri-apps/api/event';
+import { backend } from './backend/client';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { TitleBar } from './components/TitleBar';
@@ -82,6 +84,69 @@ export default function App() {
       unlisten?.();
     };
   }, [native, activeProject, requestImport, setView, pushToast]);
+
+  // Audio playback self-check: a media failure in the packaged build is
+  // invisible (the player just shows "Error"), so verify once at startup
+  // that a narration WAV loads through the asset protocol the player uses —
+  // reporting the page origin, the enforced CSP header, whether a duplicate
+  // meta CSP exists, and the MediaError code (if any) to the app log.
+  // Silent when no narration has been rendered yet.
+  useEffect(() => {
+    if (!native) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        await backend.logFrontend(`audio self-check: page=${window.location.href}`);
+        try {
+          const head = await fetch(window.location.href, { method: 'GET' });
+          const csp = head.headers.get('content-security-policy');
+          await backend.logFrontend(
+            `audio self-check: csp-header=${csp ? csp.slice(0, 600) : 'NONE'}`,
+          );
+          const meta = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+          await backend.logFrontend(
+            `audio self-check: meta-csp=${meta ? (meta.getAttribute('content') ?? '') : 'none'}`,
+          );
+        } catch (err) {
+          await backend.logFrontend(`audio self-check: fetch(location) failed: ${String(err)}`);
+        }
+        const files = await backend.listExports();
+        const wav = files.find((f) => f.name.startsWith('tts-') && f.name.endsWith('.wav'));
+        if (!wav || cancelled) return;
+        const src = convertFileSrc(wav.path);
+        await new Promise<void>((resolve) => {
+          const el = new Audio();
+          el.preload = 'metadata';
+          const done = () => resolve();
+          el.onloadedmetadata = () => {
+            void backend
+              .logFrontend(
+                `audio self-check: OK duration=${
+                  Number.isFinite(el.duration) ? el.duration.toFixed(1) : el.duration
+                }s src=${src}`,
+              )
+              .then(done);
+          };
+          el.onerror = () => {
+            void backend
+              .logFrontend(
+                `audio self-check: FAILED code=${el.error?.code ?? '?'} message=${
+                  el.error?.message ?? '?'
+                } src=${src}`,
+              )
+              .then(done);
+          };
+          el.src = src;
+          window.setTimeout(done, 8000);
+        });
+      } catch (err) {
+        void backend.logFrontend(`audio self-check: error ${String(err)}`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [native]);
 
   return (
     <div className="app-shell">

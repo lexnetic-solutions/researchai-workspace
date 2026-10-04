@@ -125,6 +125,7 @@ export const backend = {
   exportBibliography: (projectId: string, format: 'bibtex' | 'ris') =>
     invoke<ExportResult>('export_bibliography', { projectId, format }),
   listExports: () => invoke<ExportFile[]>('list_exports'),
+  logFrontend: (message: string) => invoke<void>('log_frontend', { message }),
   exportsStats: () => invoke<ExportStats>('exports_stats'),
   deleteExport: (path: string) => invoke<ExportStats>('delete_export', { path }),
   revealPath: (path: string) => invoke<string>('reveal_path', { path }),

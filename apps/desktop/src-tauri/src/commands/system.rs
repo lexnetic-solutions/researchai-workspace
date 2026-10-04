@@ -63,6 +63,15 @@ pub fn probe_document_engine() -> bool {
     crate::services::engine_client::health_ok()
 }
 
+/// Frontend diagnostics channel: the webview has no console of its own in a
+/// packaged build, so media/IPC failures are reported here and land in the
+/// app log where support can see them.
+#[tauri::command]
+pub fn log_frontend(message: String) {
+    log::info!(target: "researchai::frontend", "{message}");
+}
+
+
 // ---------------------------------------------------------------------------
 // Native file pickers (dialog plugin). The blocking variants must not run on
 // the main thread, so they execute on a dedicated thread via spawn_blocking.

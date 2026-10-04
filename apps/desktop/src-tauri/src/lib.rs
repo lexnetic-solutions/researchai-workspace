@@ -89,6 +89,7 @@ pub fn run() {
             commands::system::get_system_info,
             commands::system::run_diagnostics,
             commands::system::probe_document_engine,
+            commands::system::log_frontend,
             commands::system::pick_folder,
             commands::system::pick_documents,
         ])

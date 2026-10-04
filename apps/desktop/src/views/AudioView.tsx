@@ -374,6 +374,17 @@ export function AudioView() {
                     controls
                     preload="metadata"
                     src={convertFileSrc(narration.audioPath)}
+                    onError={(e) => {
+                      const el = e.currentTarget;
+                      const detail = `code=${el.error?.code ?? '?'} message=${
+                        el.error?.message ?? '?'
+                      }`;
+                      void backend.logFrontend(`narration player error: ${detail}`);
+                      pushToast(
+                        'error',
+                        `Audio rendered, but the player could not load it (${detail}). The file is on disk — use Reveal in Finder to open it.`,
+                      );
+                    }}
                   />
                 ) : (
                   <p className="tiny muted" style={{ marginTop: '0.5rem' }}>
