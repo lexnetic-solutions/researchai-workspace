@@ -1156,7 +1156,12 @@ pub(crate) fn transcode_to_mp3(src: &Path, out_dir: &Path) -> AppResult<PathBuf>
         src.file_stem().and_then(|s| s.to_str()).unwrap_or("tts")
     ));
     let _ = std::fs::remove_file(&out);
-    let output = Command::new("ffmpeg")
+    let ff = crate::services::transcription::resolve_ffmpeg().ok_or_else(|| {
+        AppError::msg(
+            "ffmpeg was not found — install it (e.g. `brew install ffmpeg`) to export MP3.",
+        )
+    })?;
+    let output = Command::new(&ff)
         .args(["-y", "-i"])
         .arg(src)
         .args(["-ac", "1", "-b:a", "64k"])

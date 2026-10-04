@@ -836,7 +836,7 @@ function SpeechSection() {
                 checked={tts.mp3Enabled}
                 onChange={(e) => setTts({ ...tts, mp3Enabled: e.target.checked })}
               />
-              Export MP3 via ffmpeg
+              Export every render as MP3 (via ffmpeg)
             </label>
           </div>
 
@@ -853,7 +853,8 @@ function SpeechSection() {
           <p className="tiny muted" style={{ marginTop: '0.5rem' }}>
             Piper voices are small .onnx files from the Piper samples page (install with{' '}
             <code>brew install piper</code>). Read-aloud works without AI; summaries and podcast
-            narration use the local model.
+            narration use the local model. Renders stay WAV unless “Export every render as MP3”
+            is on — and any past file can be converted in Audio → Convert audio to MP3.
           </p>
         </>
       )}

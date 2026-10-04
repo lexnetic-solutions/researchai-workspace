@@ -13,6 +13,16 @@ and the stamped section becomes the GitHub Release body.
 
 ### Added
 
+- **Convert any audio to MP3 on demand**: the Audio tab gains a
+  "Convert audio to MP3" action that transcodes any file you pick (WAV,
+  AIFF, M4A, FLAC, or a render made before MP3 export was enabled) to an
+  MP3 next to the original — originals are never touched — plus a
+  "Convert to MP3" button on every rendered sample and narration that
+  came out as WAV. The ffmpeg lookup now probes the process PATH *and*
+  the well-known prefixes (`/opt/homebrew/bin`, `/usr/local/bin`,
+  `/opt/bin`), because a GUI-launched app sees only launchd's minimal
+  PATH and would otherwise report ffmpeg as missing even when installed.
+
 - **Master Voice (F5-TTS voice cloning)**: a new voice provider that
   clones a reference recording of your own voice and narrates entirely
   offline. Pick a recording in Settings → Speech (Voice output → Master

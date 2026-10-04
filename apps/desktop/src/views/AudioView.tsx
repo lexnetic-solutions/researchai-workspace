@@ -57,6 +57,9 @@ export function AudioView() {
   const [narration, setNarration] = useState<NarrationResult | null>(null);
   const [testAudio, setTestAudio] = useState<TtsAudio | null>(null);
   const [testingVoice, setTestingVoice] = useState(false);
+  // On-demand MP3 conversion (any file, or a render made before MP3 export was on)
+  const [converting, setConverting] = useState<'' | 'test' | 'narration' | 'any'>('');
+  const [convertedAny, setConvertedAny] = useState<TtsAudio | null>(null);
 
   const reloadStatus = useCallback(async () => {
     try {
@@ -101,19 +104,21 @@ export function AudioView() {
     void reloadDocs();
   }, [reloadDocs]);
 
-  async function pickAudio() {
+  async function pickAudio(): Promise<string> {
+    let picked = '';
     if (native) {
       // No-filter single-file picker (the document picker's allow-list has no
       // audio types); the same command serves GGUF model selection.
-      const picked = await backend.aiPickModelFile();
-      if (picked) setAudioPath(picked);
-      return;
+      picked = (await backend.aiPickModelFile()) ?? '';
+    } else {
+      picked =
+        window.prompt(
+          'Browser preview: type an audio file path to simulate selection (cancel to abort).',
+          '/Users/you/Recordings/lecture-01.wav',
+        ) ?? '';
     }
-    const picked = window.prompt(
-      'Browser preview: type an audio file path to simulate selection (cancel to abort).',
-      '/Users/you/Recordings/lecture-01.wav',
-    );
     if (picked) setAudioPath(picked);
+    return picked;
   }
 
   async function transcribe() {
@@ -171,6 +176,51 @@ export function AudioView() {
     } finally {
       setTestingVoice(false);
     }
+  }
+
+  /** Shared MP3 conversion call with per-target busy state. */
+  async function convertToMp3(
+    src: string,
+    target: 'test' | 'narration' | 'any',
+  ): Promise<TtsAudio | null> {
+    setConverting(target);
+    try {
+      const out = await backend.ttsConvertToMp3(src);
+      pushToast('success', `MP3 ready — ${formatBytes(out.bytes)}.`);
+      return out;
+    } catch (err) {
+      pushToast('error', err instanceof Error ? err.message : String(err));
+      return null;
+    } finally {
+      setConverting('');
+    }
+  }
+
+  async function convertTestAudio() {
+    if (!testAudio) return;
+    const out = await convertToMp3(testAudio.path, 'test');
+    if (out) setTestAudio(out);
+  }
+
+  async function convertNarration() {
+    if (!narration) return;
+    const out = await convertToMp3(narration.audioPath, 'narration');
+    if (out) {
+      setNarration({
+        ...narration,
+        audioPath: out.path,
+        format: out.format,
+        bytes: out.bytes,
+        durationMs: out.durationMs,
+      });
+    }
+  }
+
+  async function convertAnyAudio() {
+    const picked = await pickAudio();
+    if (!picked) return;
+    const out = await convertToMp3(picked, 'any');
+    if (out) setConvertedAny(out);
   }
 
   async function revealAudio(path: string) {
@@ -397,6 +447,17 @@ export function AudioView() {
               <span className="tiny muted">
                 {mmss(testAudio.durationMs)} · {formatBytes(testAudio.bytes)}
               </span>
+              {testAudio.format !== 'mp3' && (
+                <button
+                  type="button"
+                  className="btn ghost"
+                  disabled={converting !== ''}
+                  onClick={() => void convertTestAudio()}
+                  title="Transcode this sample to MP3 (keeps the WAV too)"
+                >
+                  {converting === 'test' ? 'Converting…' : 'Convert to MP3'}
+                </button>
+              )}
             </div>
             {native ? (
               <audio
@@ -463,9 +524,70 @@ export function AudioView() {
                   >
                     Reveal in Finder
                   </button>
+                  {narration.format !== 'mp3' && (
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      disabled={converting !== ''}
+                      onClick={() => void convertNarration()}
+                      title="Transcode this render to MP3 (keeps the WAV too)"
+                    >
+                      {converting === 'narration' ? 'Converting…' : 'Convert to MP3'}
+                    </button>
+                  )}
                 </div>
               </div>
             )}
+      </div>
+
+      <div className="card">
+        <h2>Convert audio to MP3</h2>
+        <div className="field-row" style={{ marginTop: '0.5rem' }}>
+          <button
+            type="button"
+            className="btn ghost"
+            disabled={converting !== ''}
+            onClick={() => void convertAnyAudio()}
+            title="Pick any audio file and transcode it to MP3 beside the original"
+          >
+            {converting === 'any' ? 'Converting…' : 'Choose audio file & convert…'}
+          </button>
+          {convertedAny && (
+            <span className="chip status-ready">
+              MP3 · {mmss(convertedAny.durationMs)} · {formatBytes(convertedAny.bytes)}
+            </span>
+          )}
+          {convertedAny && native && (
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => void revealAudio(convertedAny.path)}
+              title={convertedAny.path}
+            >
+              Reveal in Finder
+            </button>
+          )}
+        </div>
+        {convertedAny && native && (
+          <audio
+            className="audio-player"
+            controls
+            preload="metadata"
+            style={{ marginTop: '0.5rem' }}
+            src={convertFileSrc(convertedAny.path)}
+            onError={(e) => {
+              const el = e.currentTarget;
+              const detail = `code=${el.error?.code ?? '?'} message=${el.error?.message ?? '?'}`;
+              void backend.logFrontend(`mp3 convert player error: ${detail}`);
+              pushToast('error', `Converted, but playback failed (${detail}). The file is on disk.`);
+            }}
+          />
+        )}
+        <p className="tiny muted" style={{ marginTop: '0.5rem' }}>
+          Turns any audio file — WAV, AIFF, M4A, FLAC, or a render made before MP3 export
+          was on — into an MP3 next to the original; the original is never modified.
+          Transcoding uses ffmpeg (nothing leaves this machine).
+        </p>
       </div>
 
       <div className="two-col">
@@ -484,7 +606,7 @@ export function AudioView() {
             <li>Piper: local neural voices (.onnx), spec default</li>
             <li>Master voice: F5-TTS clones your own recording</li>
             <li>macOS say: zero-install fallback voice</li>
-            <li>MP3 export via ffmpeg when enabled</li>
+            <li>MP3 export for every render (Settings → Speech) plus convert-any-file below</li>
             <li>Nothing leaves this machine — synthesis is local</li>
           </ul>
         </div>

@@ -289,13 +289,79 @@ fn sniff_wav(path: &Path) -> Result<WavInfo, String> {
     Err("WAV file has no fmt chunk.".into())
 }
 
-/// True when `ffmpeg` is executable on PATH.
+/// Well-known install prefixes probed after PATH. A GUI-launched app gets
+/// launchd's minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`), so Homebrew's
+/// `ffmpeg` is invisible to a bare `Command::new("ffmpeg")` even though it
+/// is installed — the same reason `resolve_uv` probes explicitly.
+const FFMPEG_KNOWN_DIRS: &[&str] = &["/opt/homebrew/bin", "/usr/local/bin", "/opt/bin"];
+
+/// Absolute path of the `ffmpeg` executable: every directory on the process
+/// PATH first (the user's own installs win), then the well-known prefixes.
+/// `None` when no candidate exists — callers surface install guidance.
+pub fn resolve_ffmpeg() -> Option<PathBuf> {
+    resolve_ffmpeg_in(&std::env::var_os("PATH")?, FFMPEG_KNOWN_DIRS)
+}
+
+/// Testable core of [`resolve_ffmpeg`]: first `ffmpeg` file found in
+/// `path_var`'s directories, then in `known` (empty PATH entries skipped).
+pub(crate) fn resolve_ffmpeg_in(
+    path_var: &std::ffi::OsStr,
+    known: &[&str],
+) -> Option<PathBuf> {
+    let exe = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+    for dir in std::env::split_paths(path_var) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        let cand = dir.join(exe);
+        if cand.is_file() {
+            return Some(cand);
+        }
+    }
+    for dir in known {
+        let cand = Path::new(dir).join(exe);
+        if cand.is_file() {
+            return Some(cand);
+        }
+    }
+    None
+}
+
+/// True when a usable `ffmpeg` is installed (on PATH or a known prefix).
 pub fn ffmpeg_available() -> bool {
-    Command::new("ffmpeg")
-        .arg("-version")
-        .output()
-        .map(|o| o.status.success())
+    resolve_ffmpeg()
+        .map(|ff| {
+            Command::new(&ff)
+                .arg("-version")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        })
         .unwrap_or(false)
+}
+
+/// Media duration via `ffprobe` (ships in the same install as ffmpeg),
+/// in milliseconds. `None` when ffprobe is absent or the file is unreadable.
+pub fn ffprobe_duration_ms(path: &Path) -> Option<u64> {
+    let exe = if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" };
+    let probe = resolve_ffmpeg()?.with_file_name(exe);
+    if !probe.is_file() {
+        return None;
+    }
+    let out = Command::new(&probe)
+        .args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"])
+        .arg(path)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let secs: f64 = String::from_utf8_lossy(&out.stdout).trim().parse().ok()?;
+    if secs.is_finite() && secs >= 0.0 {
+        Some((secs * 1000.0).round() as u64)
+    } else {
+        None
+    }
 }
 
 /// Convert any ffmpeg-readable input to 16 kHz mono `pcm_s16le` WAV.
@@ -309,7 +375,13 @@ pub fn convert_with_ffmpeg(src: &Path, work_dir: &Path) -> AppResult<PathBuf> {
     // Start clean so a stale file can't masquerade as this job's output.
     let _ = std::fs::remove_file(&out);
 
-    let output = Command::new("ffmpeg")
+    let ff = resolve_ffmpeg().ok_or_else(|| {
+        AppError::msg(
+            "ffmpeg was not found — install it (e.g. `brew install ffmpeg`) so \
+             non-WAV audio can be converted.",
+        )
+    })?;
+    let output = Command::new(&ff)
         .args(["-y", "-i"])
         .arg(src)
         .args(["-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le"])
@@ -442,6 +514,52 @@ mod tests {
     use super::*;
     use crate::db::tests::TempDir;
     use std::os::unix::fs::PermissionsExt;
+
+    /// A PATH directory containing a fake `ffmpeg` file wins over known dirs.
+    #[test]
+    fn resolve_ffmpeg_prefers_path_entries() {
+        let dir = TempDir::new_with_label("ffmpeg-path");
+        let exe = dir.path().join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" });
+        std::fs::write(&exe, b"#!/bin/sh\nexit 0\n").unwrap();
+        let found = resolve_ffmpeg_in(
+            dir.path().as_os_str(),
+            &["/definitely/not/here"],
+        )
+        .expect("PATH entry must be found");
+        assert_eq!(found, exe);
+    }
+
+    /// Empty PATH entries are skipped (they would otherwise match CWD).
+    #[test]
+    fn resolve_ffmpeg_falls_back_to_known_dirs_and_skips_empty() {
+        let dir = TempDir::new_with_label("ffmpeg-known");
+        let exe = dir.path().join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" });
+        std::fs::write(&exe, b"#!/bin/sh\nexit 0\n").unwrap();
+        let known = dir.path().to_string_lossy().into_owned();
+        let found = resolve_ffmpeg_in(std::ffi::OsStr::new(""), &[known.as_str()])
+            .expect("known dir must be found");
+        assert_eq!(found, exe);
+    }
+
+    /// Nothing anywhere → `None` (callers then show install guidance).
+    #[test]
+    fn resolve_ffmpeg_returns_none_when_absent() {
+        let found = resolve_ffmpeg_in(
+            std::ffi::OsStr::new("/definitely/not/here"),
+            &["/also/not/here"],
+        );
+        assert!(found.is_none(), "unexpectedly found {found:?}");
+    }
+
+    /// Garbage input yields `None` whether ffprobe exists (parse fails) or
+    /// not (tool absent) — never a panic and never a made-up duration.
+    #[test]
+    fn ffprobe_duration_is_none_for_garbage_input() {
+        let dir = TempDir::new_with_label("ffprobe");
+        let wav = dir.path().join("x.wav");
+        std::fs::write(&wav, b"not audio").unwrap();
+        assert!(ffprobe_duration_ms(&wav).is_none());
+    }
 
     /// 44-byte canonical WAV header + a little PCM data.
     fn wav_bytes(sample_rate: u32, channels: u16) -> Vec<u8> {

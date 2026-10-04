@@ -209,6 +209,7 @@ export const backend = {
   ttsNarrate: (documentId: string, kind: NarrationKind) =>
     invoke<NarrationResult>('tts_narrate', { documentId, kind }),
   ttsTestVoice: () => invoke<TtsAudio>('tts_test_voice'),
+  ttsConvertToMp3: (path: string) => invoke<TtsAudio>('tts_convert_to_mp3', { path }),
 
   probeDocumentEngine: () => invoke<boolean>('probe_document_engine'),
 };
@@ -1041,6 +1042,15 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
         bytes: 480_000,
         durationMs: 6_200,
       } as T;
+    case 'tts_convert_to_mp3': {
+      const src = String(args?.['path'] ?? 'audio.wav');
+      return {
+        path: src.replace(/\.[^.]+$/, '.mp3'),
+        format: 'mp3',
+        bytes: 320_000,
+        durationMs: 6_200,
+      } as T;
+    }
     case 'tts_narrate': {
       const kind = String(args?.['kind'] ?? 'summary_5');
       if (!MOCK_SETTINGS.aiEnabled) {

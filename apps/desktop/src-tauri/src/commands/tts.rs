@@ -128,6 +128,58 @@ pub async fn tts_test_voice(app: AppHandle) -> AppResult<crate::services::tts::T
     .map_err(|e| AppError::msg(format!("Voice test failed to run: {e}")))?
 }
 
+/// Convert any audio file (WAV, AIFF, M4A, FLAC, …) to an MP3 beside it,
+/// so every render — past or present — can end up as MP3. Returns the
+/// converted file's metadata for the player.
+#[tauri::command]
+pub async fn tts_convert_to_mp3(path: String) -> AppResult<crate::services::tts::TtsAudio> {
+    tauri::async_runtime::spawn_blocking(move || convert_to_mp3_inner(&path))
+        .await
+        .map_err(|e| AppError::msg(format!("MP3 conversion failed to run: {e}")))?
+}
+
+/// Validation + conversion, free of Tauri state so tests can drive it.
+pub(crate) fn convert_to_mp3_inner(path: &str) -> AppResult<crate::services::tts::TtsAudio> {
+    use crate::error::AppError as E;
+    crate::services::path_validation::validate_audio_path(path, "the audio file")?;
+    let src = std::path::Path::new(path);
+    if !src.is_file() {
+        return Err(E::msg(format!("Audio file not found: {path}")));
+    }
+    let ext = src
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if ext == "mp3" {
+        return Err(E::msg("That file is already an MP3 — nothing to convert."));
+    }
+    if !crate::services::transcription::ffmpeg_available() {
+        return Err(E::msg(
+            "MP3 conversion needs ffmpeg — install it (e.g. `brew install ffmpeg`) \
+             and try again.",
+        ));
+    }
+    let out_dir = src
+        .parent()
+        .ok_or_else(|| E::msg("That audio file has no parent directory."))?;
+    log::info!(target: "researchai::tts", "converting '{path}' to MP3");
+    let mp3 = crate::services::tts::transcode_to_mp3(src, out_dir)?;
+    let bytes = std::fs::metadata(&mp3)?.len();
+    let duration_ms = crate::services::transcription::ffprobe_duration_ms(&mp3)
+        .or_else(|| {
+            crate::services::tts::wav_duration_ms_from_header(&mp3)
+                .ok()
+                .flatten()
+        })
+        .unwrap_or(0);
+    Ok(crate::services::tts::TtsAudio {
+        path: mp3.to_string_lossy().into_owned(),
+        format: "mp3".into(),
+        bytes,
+        duration_ms,
+    })
+}
+
 #[tauri::command]
 pub fn tts_save_settings(
     state: State<'_, AppState>,
@@ -434,6 +486,75 @@ fn kind_slug(kind: crate::services::narration::NarrationKind) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Minimal valid PCM WAV (24 kHz mono 16-bit, `samples` frames).
+    fn write_minimal_wav(dir: &std::path::Path, name: &str, samples: usize) -> std::path::PathBuf {
+        let data: Vec<u8> = vec![0u8; samples * 2];
+        let mut bytes: Vec<u8> = b"RIFF".to_vec();
+        bytes.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(b"WAVE");
+        bytes.extend_from_slice(b"fmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        bytes.extend_from_slice(&1u16.to_le_bytes()); // mono
+        bytes.extend_from_slice(&24_000u32.to_le_bytes());
+        bytes.extend_from_slice(&48_000u32.to_le_bytes()); // byte rate
+        bytes.extend_from_slice(&2u16.to_le_bytes()); // block align
+        bytes.extend_from_slice(&16u16.to_le_bytes()); // bits
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&data);
+        let path = dir.join(name);
+        std::fs::write(&path, &bytes).unwrap();
+        path
+    }
+
+    /// Missing files, non-audio paths and already-MP3 inputs fail with
+    /// guidance before any subprocess runs.
+    #[test]
+    fn convert_to_mp3_rejects_bad_inputs() {
+        let dir = crate::db::tests::TempDir::new_with_label("mp3-convert");
+
+        let missing = convert_to_mp3_inner(&dir.path().join("gone.wav").to_string_lossy())
+            .unwrap_err()
+            .to_string();
+        assert!(missing.contains("not found"), "got: {missing}");
+
+        let txt = dir.path().join("notes.txt");
+        std::fs::write(&txt, b"text").unwrap();
+        let not_audio = convert_to_mp3_inner(&txt.to_string_lossy()).unwrap_err().to_string();
+        assert!(not_audio.contains("does not look like"), "got: {not_audio}");
+
+        let mp3 = dir.path().join("already.mp3");
+        std::fs::write(&mp3, b"\xff\xfb\x90\x64").unwrap();
+        let dup = convert_to_mp3_inner(&mp3.to_string_lossy()).unwrap_err().to_string();
+        assert!(dup.contains("already an MP3"), "got: {dup}");
+    }
+
+    /// End-to-end when ffmpeg is installed (this machine): a real WAV in,
+    /// a real MP3 beside it out — valid frame magic, non-zero duration from
+    /// ffprobe, and the source file untouched. Skips only when the optional
+    /// tool itself is absent (the command's own precondition).
+    #[test]
+    fn convert_to_mp3_produces_a_real_mp3_when_ffmpeg_exists() {
+        if !crate::services::transcription::ffmpeg_available() {
+            return;
+        }
+        let dir = crate::db::tests::TempDir::new_with_label("mp3-real");
+        let wav = write_minimal_wav(dir.path(), "sample.wav", 12_000); // 0.5 s
+        let out = convert_to_mp3_inner(&wav.to_string_lossy()).unwrap();
+
+        assert_eq!(out.format, "mp3");
+        assert!(out.path.ends_with("sample.mp3"), "{}", out.path);
+        let bytes = std::fs::read(&out.path).unwrap();
+        assert!(bytes.len() > 1000, "suspiciously small: {}", bytes.len());
+        let magic_ok = bytes.starts_with(b"ID3")
+            || (bytes[0] == 0xff && (bytes[1] & 0xe0) == 0xe0);
+        assert!(magic_ok, "not an MP3 frame: {:02x?}", &bytes[..2.min(bytes.len())]);
+        assert!(out.duration_ms >= 400, "duration: {}", out.duration_ms);
+        // Non-destructive: the source WAV stays.
+        assert!(wav.is_file());
+    }
 
     /// A fully configured Piper (binary + voice present) must stay selected.
     #[cfg(unix)]

@@ -1102,3 +1102,14 @@ work offline on first launch with zero setup.
   md5 `bfb8e1ad32dfc1a70f514a4430f6b9aa` matches the source file; the
   repo is private, so the raw release URL is not shareable, and MEGA
   requires an account for programmatic upload).
+- **MP3 for every audio**: renders honour the existing "Export every
+  render as MP3" toggle (now on for this install), and a new
+  `tts_convert_to_mp3` command converts *any* file — WAV/AIFF/M4A/FLAC,
+  including renders made before the toggle was on — to an MP3 beside the
+  untouched original (Audio tab: convert-any-file picker + per-result
+  "Convert to MP3" buttons). `ffmpeg`/`ffprobe` now resolve via PATH
+  **plus** the well-known prefixes, so a GUI-launched app (launchd's
+  minimal PATH) still finds a Homebrew install; duration comes from
+  ffprobe. Six new tests (resolver ordering, garbage-duration contract,
+  validation errors, real ffmpeg WAV→MP3 with frame-magic + duration
+  assertions); cargo 165 green, tsc 0, pnpm 0.
