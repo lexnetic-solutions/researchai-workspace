@@ -20,6 +20,7 @@ function useSetupChecks(): SetupCheck[] {
   const [engineUp, setEngineUp] = useState<boolean | null>(null);
   const [aiEnabled, setAiEnabled] = useState<boolean | null>(null);
   const [modelReady, setModelReady] = useState<boolean | null>(null);
+  const [modelLoaded, setModelLoaded] = useState(false);
   const [stt, setStt] = useState<SttStatus | null>(null);
   const [tts, setTts] = useState<TtsStatus | null>(null);
 
@@ -35,7 +36,15 @@ function useSetupChecks(): SetupCheck[] {
       if (settings.aiEnabled) {
         try {
           const rt = await backend.aiRuntimeStatus();
-          setModelReady(rt.state.state === 'ready');
+          setModelLoaded(rt.state.state === 'ready');
+          if (rt.state.state === 'ready') {
+            setModelReady(true);
+          } else {
+            // Setup ≠ warm runtime: the model simply unloads when idle. A
+            // registered, available model means this checklist item is done.
+            const models = await backend.aiListModels();
+            setModelReady(models.some((m) => m.status === 'available'));
+          }
         } catch {
           setModelReady(false);
         }
@@ -77,15 +86,22 @@ function useSetupChecks(): SetupCheck[] {
     {
       id: 'ai',
       label: 'Local AI (Ask, evidence, narration scripts)',
-      state: aiEnabled === null ? 'pending' : !aiEnabled ? 'attention' : modelReady ? 'ok' : 'attention',
+      state:
+        aiEnabled === null || (aiEnabled && modelReady === null)
+          ? 'pending'
+          : !aiEnabled || !modelReady
+            ? 'attention'
+            : 'ok',
       detail:
-        aiEnabled == null
+        aiEnabled == null || (aiEnabled && modelReady === null)
           ? 'Checking…'
           : !aiEnabled
             ? 'No-AI mode is on — the app works without it; enable AI for Ask & summaries.'
-            : modelReady
-              ? 'Model loaded and ready.'
-              : 'Add a GGUF model in Settings → Local AI and load it.',
+            : !modelReady
+              ? 'Add a GGUF model in Settings → Local AI and load it.'
+              : modelLoaded
+                ? 'Model loaded and ready.'
+                : 'Model ready — it loads on first use and unloads when idle.',
       view: 'settings',
     },
     {

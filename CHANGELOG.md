@@ -41,6 +41,12 @@ and the stamped section becomes the GitHub Release body.
 
 ### Fixed
 
+- **Setup checklist no longer cries wolf about the AI model**: the Local
+  AI item showed "Add a GGUF model…" whenever the runtime had idled out
+  (models unload after 10 idle minutes by design). It now checks for an
+  available registered model and only asks you to add one when there is
+  genuinely none — "Model ready — it loads on first use" when it's warm
+  or cold.
 - **In-app audio playback works**: renders succeeded but the built-in
   player only showed "Error" (MEDIA_ERR_SRC_NOT_SUPPORTED on every load).
   `index.html` shipped a second, older CSP as a `<meta>` tag with no

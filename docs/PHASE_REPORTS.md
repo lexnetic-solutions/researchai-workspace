@@ -1113,3 +1113,14 @@ work offline on first launch with zero setup.
   ffprobe. Six new tests (resolver ordering, garbage-duration contract,
   validation errors, real ffmpeg WAV→MP3 with frame-magic + duration
   assertions); cargo 165 green, tsc 0, pnpm 0.
+- **Setup checklist reconciled (screenshot review)**: Local AI showed
+  "Add a GGUF model…" because the check demanded a *warm* runtime while
+  the model unloads after 10 idle minutes by design — it now passes on
+  an available registered model (the bundled Qwen3-0.6B was registered
+  and available all along) and reports "loads on first use" when cold.
+  Lecture transcription was genuinely unconfigured: installed
+  `whisper-cpp` (whisper-cli 0.25.3 via brew), fetched `ggml-base.bin`
+  (147,951,465 B, GGML magic verified) from the whisper.cpp Hugging Face
+  mirror (the GitHub `releases/latest` asset 404s) into the data models
+  dir, and wrote both `stt.*` paths into settings. Live proof: whisper
+  transcribed the app's own voice-test WAV end-to-end in 1.5 s.
