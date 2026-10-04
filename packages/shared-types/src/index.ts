@@ -520,7 +520,7 @@ export interface TranscriptionJobResult {
 
 /** TTS settings: local Piper (default) or the macOS `say` voice. */
 export interface TtsSettings {
-  /** "piper" | "macos-say". */
+  /** "piper" | "macos-say" | "master-voice" (F5-TTS voice cloning). */
   readonly provider: string;
   readonly piperPath: string;
   /** Piper voice model (.onnx); its .json sits beside it. */
@@ -531,16 +531,30 @@ export interface TtsSettings {
   readonly macosVoice: string;
   /** Transcode WAV → MP3 via ffmpeg when available. */
   readonly mp3Enabled: boolean;
+  /** Reference recording cloned by the Master Voice (staged into the app data dir on save). */
+  readonly masterRefPath: string;
+}
+
+/** One rendered audio file (tts_test_voice). */
+export interface TtsAudio {
+  /** Absolute path of the rendered file (WAV, or MP3 when transcoded). */
+  readonly path: string;
+  /** "wav" | "mp3". */
+  readonly format: string;
+  readonly bytes: number;
+  readonly durationMs: number;
 }
 
 /** One-shot availability probe for the Audio tab and Settings → Speech. */
 export interface TtsStatus {
-  /** Selected provider id ("piper" | "macos-say"). */
+  /** Selected provider id ("piper" | "macos-say" | "master-voice"). */
   readonly provider: string;
   readonly binaryFound: boolean;
   readonly modelFound: boolean;
   readonly ffmpegFound: boolean;
   readonly ready: boolean;
+  /** Master Voice only: F5 model cached (false = first render downloads it). */
+  readonly masterAssetsCached?: boolean;
   readonly outputDir: string;
   readonly settings: TtsSettings;
 }

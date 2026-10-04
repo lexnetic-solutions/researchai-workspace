@@ -1223,7 +1223,8 @@ impl SttSettings {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct TtsSettings {
-    /// "piper" (spec default) or "macos-say" (convenience fallback).
+    /// "piper" (spec default), "macos-say" (convenience fallback) or
+    /// "master-voice" (F5-TTS cloning of `master_ref_path`).
     pub provider: String,
     /// Path to the `piper` executable.
     pub piper_path: String,
@@ -1235,6 +1236,9 @@ pub struct TtsSettings {
     pub macos_voice: String,
     /// Transcode WAV output to MP3 via ffmpeg when available.
     pub mp3_enabled: bool,
+    /// Reference recording cloned by the Master Voice provider
+    /// (staged into `<data>/voices/` when saved).
+    pub master_ref_path: String,
 }
 
 impl Default for TtsSettings {
@@ -1246,6 +1250,7 @@ impl Default for TtsSettings {
             speed: 1.0,
             macos_voice: String::new(),
             mp3_enabled: false,
+            master_ref_path: String::new(),
         }
     }
 }
@@ -1258,6 +1263,7 @@ impl TtsSettings {
         Self {
             provider: match get("provider").as_deref() {
                 Some("macos-say") => "macos-say".into(),
+                Some("master-voice") => "master-voice".into(),
                 _ => d.provider,
             },
             piper_path: get("piper_path").unwrap_or_default(),
@@ -1265,6 +1271,7 @@ impl TtsSettings {
             speed: get_f32("speed").map(|s: f32| s.clamp(0.5, 2.0)).unwrap_or(d.speed),
             macos_voice: get("macos_voice").unwrap_or_default(),
             mp3_enabled: get("mp3_enabled").map(|v| v == "true").unwrap_or(d.mp3_enabled),
+            master_ref_path: get("master_ref_path").unwrap_or_default(),
         }
     }
 
@@ -1276,6 +1283,7 @@ impl TtsSettings {
             ("tts.speed", self.speed.to_string()),
             ("tts.macos_voice", self.macos_voice.clone()),
             ("tts.mp3_enabled", self.mp3_enabled.to_string()),
+            ("tts.master_ref_path", self.master_ref_path.clone()),
         ]
     }
 }
@@ -1524,6 +1532,7 @@ pub(crate) mod tests {
             speed: 1.25,
             macos_voice: "Samantha".into(),
             mp3_enabled: true,
+            master_ref_path: String::new(),
         };
         db.save_tts_settings(&s).unwrap();
         let loaded = db.get_tts_settings().unwrap();

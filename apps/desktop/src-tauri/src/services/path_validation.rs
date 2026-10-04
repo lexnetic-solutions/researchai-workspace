@@ -109,6 +109,32 @@ pub(crate) fn validate_model_path(
     Ok(())
 }
 
+/// Validate a user-supplied *audio* path (the Master Voice reference
+/// recording — the inverse of the binary/model guards above).
+///
+/// * empty → rejected when the provider needs it (caller decides)
+/// * directory or a non-audio extension → rejected
+/// * missing file → allowed (the status chip owns "missing on disk")
+pub(crate) fn validate_audio_path(path: &str, label: &str) -> AppResult<()> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Ok(());
+    }
+    let p = std::path::Path::new(path);
+    if p.is_dir() {
+        return Err(AppError::msg(format!(
+            "“{path}” is a folder, not {label} — pick an audio file with Browse…"
+        )));
+    }
+    if !is_media(path) {
+        return Err(AppError::msg(format!(
+            "“{path}” does not look like {label} — pick a recording such as .wav, .mp3 or \
+             .m4a with Browse…"
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +184,23 @@ mod tests {
         assert!(validate_model_path("/voices/en_US-amy-medium.onnx", "a Piper voice", "onnx").is_ok());
         assert!(validate_model_path("/models/ggml-base.bin", "a GGML model", "bin").is_ok());
         assert!(validate_binary_path("/opt/homebrew/bin/piper", "piper", "hint").is_ok());
+    }
+
+    #[test]
+    fn master_voice_reference_must_look_like_audio() {
+        assert!(validate_audio_path("/Users/x/Downloads/take_I.wav", "the master voice recording").is_ok());
+        assert!(validate_audio_path("/recordings/talk.m4a", "the master voice recording").is_ok());
+        // The inverse mistake: a binary/model where audio is expected.
+        let err = validate_audio_path("/opt/homebrew/bin/piper", "the master voice recording")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("does not look like"), "got: {err}");
+        assert!(validate_audio_path("/models/voice.onnx", "the master voice recording").is_err());
+        // Directories are never recordings; missing files pass (chip shows it).
+        let dir = crate::db::tests::TempDir::new_with_label("pathval-audio");
+        assert!(validate_audio_path(&dir.path().to_string_lossy(), "the master voice recording").is_err());
+        assert!(validate_audio_path("/no/such/recording.wav", "the master voice recording").is_ok());
+        assert!(validate_audio_path("", "the master voice recording").is_ok());
     }
 
     #[cfg(unix)]

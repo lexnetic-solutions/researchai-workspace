@@ -38,6 +38,7 @@ import type {
   SttStatus,
   SystemInfo,
   TranscriptionJobResult,
+  TtsAudio,
   TtsSettings,
   TtsStatus,
 } from '@researchai/shared-types';
@@ -207,6 +208,7 @@ export const backend = {
     invoke<NarrationResult>('tts_speak_document', { documentId }),
   ttsNarrate: (documentId: string, kind: NarrationKind) =>
     invoke<NarrationResult>('tts_narrate', { documentId, kind }),
+  ttsTestVoice: () => invoke<TtsAudio>('tts_test_voice'),
 
   probeDocumentEngine: () => invoke<boolean>('probe_document_engine'),
 };
@@ -374,6 +376,7 @@ let MOCK_TTS_SETTINGS: TtsSettings = {
   speed: 1.0,
   macosVoice: 'Samantha',
   mp3Enabled: true,
+  masterRefPath: '',
 };
 
 function mockNarration(fileName: string, words: number, engine: string): NarrationResult {
@@ -1015,6 +1018,7 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
         modelFound: true,
         ffmpegFound: true,
         ready: true,
+        masterAssetsCached: true,
         outputDir: 'ResearchAIData/exports',
         settings: clone(s),
       } as T;
@@ -1030,6 +1034,13 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
       const name = doc ? doc.fileName.replace(/\.[^.]+$/, '') : 'document';
       return mockNarration(name, 2400, 'read_aloud') as T;
     }
+    case 'tts_test_voice':
+      return {
+        path: 'ResearchAIData/exports/tts-voice-test.wav',
+        format: 'wav',
+        bytes: 480_000,
+        durationMs: 6_200,
+      } as T;
     case 'tts_narrate': {
       const kind = String(args?.['kind'] ?? 'summary_5');
       if (!MOCK_SETTINGS.aiEnabled) {

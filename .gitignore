@@ -55,3 +55,6 @@ apps/desktop/src-tauri/packaging/resources/models/*
 !apps/desktop/src-tauri/packaging/resources/models/.gitkeep
 # PyInstaller work directory
 services/document-engine/build/
+
+# Local release artifacts staged for transfer (never commit)
+delivery/

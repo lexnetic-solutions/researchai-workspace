@@ -1064,3 +1064,39 @@ work offline on first launch with zero setup.
 - **Battery**: cargo **135** green (114 lib incl. the new trim test +
   5 bundled tests, 20 contract, 1 live E2E), `tsc` clean, engine
   `ruff` + `pytest` **36** green.
+
+## Post-plan round — Master Voice (F5-TTS voice cloning)
+
+- **Master Voice provider** ships end-to-end: `services/voice-engine/render.py`
+  (PEP 723 inline deps, one-shot `uv run`, `--ref/--ref-text/--text-file/--out/
+  --speed/--device`) behind a `MasterVoiceProvider` in
+  `src-tauri/src/services/master_voice.rs`; settings stage the chosen recording
+  into `<data>/voices/master-voice.<ext>` (+ transcript sidecar) and
+  `validate_audio_path` guards the picker. Effective-provider fallback chain:
+  selected → Piper → macOS say, so the app degrades instead of failing.
+- **Measured on this machine**: model (1.35 GB) lives in the shared
+  `~/.cache/huggingface` link; first run downloads once. Warm short render
+  ≈ 62 s (import 5 + model 37 + synth 21). MPS is fast but intermittently
+  aborts (segfault / Metal command-buffer assertion) — every observed failure
+  was long text; `RENDER_DEVICES = [auto, cpu]` retries CPU transparently and
+  the render always completes.
+- **Live in-app proof (installed .app)**: Audio → "Test voice" against the
+  staged take_I.wav → `voice test requested via provider 'master-voice'`,
+  MPS attempt aborted (exit 139), automatic CPU retry, `tts-voice-test.wav`
+  written (305,708 B, 24 kHz mono Int16, 6.37 s — afinfo clean). A full
+  document render (19,700 words) then ran on the CPU path for ~7 h at full
+  throughput via the same chain — correctness proven, wall-time is the
+  known CPU cost of F5-TTS (~4.4× realtime).
+- **Battery**: cargo **159** green (138 lib incl. path-validation and
+  provider tests + 20 contract + 1 live ignored test), `tsc --noEmit` 0,
+  `pnpm -r test` 0, engine `ruff` + `pytest` 0; live Rust-chain test
+  (`live_master_voice … --ignored`) rendered a real WAV through uv in 120 s.
+- **Packaging**: `tauri.conf.json` bundles `services/voice-engine/` →
+  `Resources/voice-engine/` (two levels up from src-tauri was rejected by the
+  bundler; three levels resolves); release `.app` ships `render.py`, installed
+  ad-hoc signed, startup log `audio self-check: OK`.
+- **Korea delivery**: v0.1.4 `ResearchAI.Workspace_0.1.4_x64-setup.exe`
+  (508,498,161 B) pulled from the GitHub release, sha256
+  `294bf11b7f351b0242cf2496a8865dd0b8591340c5ed453e5f1920421dff473d`,
+  uploaded to an anonymous single-use transfer link (the repo is private, so
+  the raw release URL is not shareable).

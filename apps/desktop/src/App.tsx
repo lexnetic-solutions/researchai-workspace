@@ -110,6 +110,20 @@ export default function App() {
         } catch (err) {
           await backend.logFrontend(`audio self-check: fetch(location) failed: ${String(err)}`);
         }
+        // Voice self-check: what would actually render right now (provider,
+        // readiness, master-voice assets) — logged before the media probe so
+        // it lands even on a fresh install with no exports yet.
+        try {
+          const v = await backend.ttsCheck();
+          await backend.logFrontend(
+            `voice self-check: provider=${v.provider} ready=${v.ready} ` +
+              `uv=${v.binaryFound} ref+script=${v.modelFound} ` +
+              `f5ModelCached=${v.masterAssetsCached ?? '?'} ` +
+              `ref=${v.settings.masterRefPath || '(unset)'}`,
+          );
+        } catch (err) {
+          await backend.logFrontend(`voice self-check: failed ${String(err)}`);
+        }
         const files = await backend.listExports();
         const wav = files.find((f) => f.name.startsWith('tts-') && f.name.endsWith('.wav'));
         if (!wav || cancelled) return;

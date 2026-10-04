@@ -565,7 +565,10 @@ function SpeechSection() {
     if (picked && stt) void save({ ...stt, [field]: picked });
   }
 
-  async function pickTtsPath(field: 'piperPath' | 'voiceModelPath', kind: string) {
+  async function pickTtsPath(
+    field: 'piperPath' | 'voiceModelPath' | 'masterRefPath',
+    kind: string,
+  ) {
     if (native) {
       const picked = await backend.aiPickModelFile();
       if (picked && tts) void saveTts({ ...tts, [field]: picked });
@@ -575,7 +578,9 @@ function SpeechSection() {
       `Browser preview: type the ${kind} path (cancel to abort).`,
       field === 'piperPath'
         ? '/opt/homebrew/bin/piper'
-        : '/opt/piper/voices/en_US-amy-medium.onnx',
+        : field === 'masterRefPath'
+          ? '/Users/you/Recordings/voice-sample.wav'
+          : '/opt/piper/voices/en_US-amy-medium.onnx',
     );
     if (picked && tts) void saveTts({ ...tts, [field]: picked });
   }
@@ -705,22 +710,67 @@ function SpeechSection() {
               aria-label="Voice provider"
               onChange={(e) => setTts({ ...tts, provider: e.target.value })}
             >
+              <option value="master-voice">
+                Master voice (clone your own recording, offline)
+              </option>
               <option value="piper">Piper (recommended, local neural voices)</option>
               <option value="macos-say">macOS say (built-in voice)</option>
             </select>
             <span
               className={`chip ${ttsStatus.ready ? 'pass' : 'fail'}`}
               title={
-                ttsStatus.provider === 'macos-say'
-                  ? 'Uses the built-in macOS speech service'
-                  : 'Needs the piper binary and a voice model below'
+                ttsStatus.provider === 'master-voice'
+                  ? 'F5-TTS clones the reference recording, entirely on this machine'
+                  : ttsStatus.provider === 'macos-say'
+                    ? 'Uses the built-in macOS speech service'
+                    : 'Needs the piper binary and a voice model below'
               }
             >
               {ttsStatus.ready ? 'ready' : 'not ready'}
             </span>
+            {tts.provider === 'master-voice' && (
+              <span
+                className={`chip ${ttsStatus.masterAssetsCached ? 'pass' : 'subtle'}`}
+                title={
+                  ttsStatus.masterAssetsCached
+                    ? 'F5-TTS model is cached — renders run fully offline'
+                    : 'First render downloads the F5-TTS model (~1.3 GB), then runs offline'
+                }
+              >
+                {ttsStatus.masterAssetsCached
+                  ? 'F5 model cached'
+                  : 'F5 model downloads on first render'}
+              </span>
+            )}
           </div>
 
-          {tts.provider === 'piper' ? (
+          {tts.provider === 'master-voice' ? (
+            <>
+              <div className="field-row" style={{ marginTop: '0.5rem' }}>
+                <input
+                  className="search-input"
+                  value={tts.masterRefPath}
+                  placeholder="/path/to/voice-sample.wav"
+                  aria-label="Master voice reference recording"
+                  onChange={(e) => setTts({ ...tts, masterRefPath: e.target.value })}
+                />
+                <button
+                  type="button"
+                  className="btn ghost tiny-btn"
+                  onClick={() => void pickTtsPath('masterRefPath', 'master voice recording')}
+                >
+                  Browse…
+                </button>
+              </div>
+              <p className="tiny muted" style={{ marginTop: '0.35rem' }}>
+                Pick a clean recording of the voice to clone (10–30 s of solo speech is ideal;
+                the app copies it into its data folder on save). Rendering needs{' '}
+                <code>uv</code> on PATH (<code>brew install uv</code>) and the F5-TTS model,
+                which downloads once on the first render — afterwards everything runs offline,
+                on this machine.
+              </p>
+            </>
+          ) : tts.provider === 'piper' ? (
             <>
               <div className="field-row" style={{ marginTop: '0.5rem' }}>
                 <input

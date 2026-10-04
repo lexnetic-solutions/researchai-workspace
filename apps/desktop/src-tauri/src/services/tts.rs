@@ -1150,7 +1150,7 @@ fn wav_data_offset(path: &Path) -> std::io::Result<Option<u64>> {
 }
 
 /// Transcode a rendered WAV to mono MP3 (64 kbps) beside it via ffmpeg.
-fn transcode_to_mp3(src: &Path, out_dir: &Path) -> AppResult<PathBuf> {
+pub(crate) fn transcode_to_mp3(src: &Path, out_dir: &Path) -> AppResult<PathBuf> {
     let out = out_dir.join(format!(
         "{}.mp3",
         src.file_stem().and_then(|s| s.to_str()).unwrap_or("tts")
@@ -1178,11 +1178,16 @@ fn transcode_to_mp3(src: &Path, out_dir: &Path) -> AppResult<PathBuf> {
 }
 
 /// Build the provider for the saved settings (Phase 8 selection).
+/// `resource_dir` locates the bundled Master Voice render script.
 pub fn provider_for(
     s: &crate::db::TtsSettings,
+    resource_dir: Option<&Path>,
     out_dir: impl Into<PathBuf>,
 ) -> AppResult<Box<dyn TextToSpeechProvider>> {
     match s.provider.as_str() {
+        "master-voice" => Ok(Box::new(crate::services::master_voice::MasterVoiceProvider::from_settings(
+            s, resource_dir, out_dir,
+        ))),
         "macos-say" => {
             #[cfg(target_os = "macos")]
             {
@@ -1647,12 +1652,19 @@ mod tests {
             provider: "piper".into(),
             ..crate::db::TtsSettings::default()
         };
-        assert!(provider_for(&piper_settings, &out).is_ok());
+        assert!(provider_for(&piper_settings, None, &out).is_ok());
         // Non-macOS cfg path returns the macOS error; on macOS it constructs.
         let say_settings = crate::db::TtsSettings {
             provider: "macos-say".into(),
             ..crate::db::TtsSettings::default()
         };
-        let _ = provider_for(&say_settings, &out);
+        let _ = provider_for(&say_settings, None, &out);
+        // Master voice constructs on every platform (readiness is check()'s job).
+        let master_settings = crate::db::TtsSettings {
+            provider: "master-voice".into(),
+            ..crate::db::TtsSettings::default()
+        };
+        let p = provider_for(&master_settings, None, &out).unwrap();
+        assert!(!p.check().ready, "no ref/script → not ready");
     }
 }

@@ -16,12 +16,15 @@ use crate::state::AppState;
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TtsStatusResponse {
-    /// Selected provider id ("piper" | "macos-say").
+    /// Selected provider id ("piper" | "macos-say" | "master-voice").
     pub provider: String,
     pub binary_found: bool,
     pub model_found: bool,
     pub ffmpeg_found: bool,
     pub ready: bool,
+    /// Master Voice only: F5-TTS checkpoint already cached (false = the
+    /// first render downloads ~1.3 GB).
+    pub master_assets_cached: bool,
     pub output_dir: String,
     pub settings: crate::db::TtsSettings,
 }
@@ -29,7 +32,7 @@ pub struct TtsStatusResponse {
 fn status_response(state: &AppState) -> AppResult<TtsStatusResponse> {
     let s = state.db.get_tts_settings()?;
     let out_dir = state.data_dir.join("exports");
-    let (provider, effective) = effective_provider(&s, out_dir)?;
+    let (provider, effective) = effective_provider(&s, state.resource_dir.as_deref(), out_dir)?;
     let st = provider.check();
     Ok(TtsStatusResponse {
         provider: effective,
@@ -37,27 +40,42 @@ fn status_response(state: &AppState) -> AppResult<TtsStatusResponse> {
         model_found: st.model_found,
         ffmpeg_found: crate::services::transcription::ffmpeg_available(),
         ready: st.ready,
+        master_assets_cached: crate::services::master_voice::f5_assets_cached(),
         output_dir: st.output_dir,
         settings: s,
     })
 }
 
 /// The provider that will actually render, plus its id (`"piper"` |
-/// `"macos-say"`) for status and UI labels.
+/// `"macos-say"` | `"master-voice"`) for status and UI labels.
 ///
-/// Normally this is the saved selection. When Piper is selected but not
-/// usable — binary or voice model missing, the classic half-configured
-/// install — the built-in macOS `say` voice takes over on macOS so audio
-/// generation works with zero setup (spec §47.7 fallback voice). Status and
-/// both render commands go through this one function, so what the UI reports
-/// as ready is exactly what renders.
+/// Normally this is the saved selection. When the saved provider is not
+/// usable — the classic half-configured install (Piper without binary or
+/// model, Master Voice without `uv` or recording) — a built-in fallback
+/// takes over so audio generation still works: the macOS `say` voice on
+/// macOS (zero setup), Piper when it is configured. Status and both render
+/// commands go through this one function, so what the UI reports as ready
+/// is exactly what renders.
 fn effective_provider(
     s: &crate::db::TtsSettings,
+    resource_dir: Option<&std::path::Path>,
     out_dir: std::path::PathBuf,
 ) -> AppResult<(Box<dyn crate::services::tts::TextToSpeechProvider>, String)> {
-    let selected = crate::services::tts::provider_for(s, out_dir.clone())?;
+    let selected = crate::services::tts::provider_for(s, resource_dir, out_dir.clone())?;
     if selected.check().ready {
         return Ok((selected, s.provider.clone()));
+    }
+    if s.provider != "piper" {
+        // Piper first when it is actually configured (works on every OS).
+        let piper = crate::services::tts::PiperProvider::from_settings(s, out_dir.clone());
+        if piper.check().ready {
+            log::info!(
+                target: "researchai::tts",
+                "{} selected but not ready — falling back to Piper",
+                s.provider
+            );
+            return Ok((Box::new(piper), "piper".into()));
+        }
     }
     #[cfg(target_os = "macos")]
     if s.provider != "macos-say" {
@@ -65,7 +83,8 @@ fn effective_provider(
         if say.check().ready {
             log::info!(
                 target: "researchai::tts",
-                "piper selected but not ready — falling back to the built-in macOS say voice"
+                "{} selected but not ready — falling back to the built-in macOS say voice",
+                s.provider
             );
             return Ok((Box::new(say), "macos-say".into()));
         }
@@ -83,27 +102,97 @@ pub fn tts_get_settings(state: State<'_, AppState>) -> AppResult<crate::db::TtsS
     state.db.get_tts_settings()
 }
 
+/// Sample sentence rendered with the provider that would actually speak,
+/// so users can hear the configured voice (and the whole Master Voice
+/// chain) without rendering an entire document.
+const TEST_SENTENCE: &str =
+    "This is how your ResearchAI voice sounds. Everything you hear was rendered on this machine.";
+
+#[tauri::command]
+pub async fn tts_test_voice(app: AppHandle) -> AppResult<crate::services::tts::TtsAudio> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let s = state.db.get_tts_settings()?;
+        let (voice, effective) = effective_provider(
+            &s,
+            state.resource_dir.as_deref(),
+            state.data_dir.join("exports"),
+        )?;
+        log::info!(
+            target: "researchai::tts",
+            "voice test requested via provider '{effective}'"
+        );
+        voice.render(TEST_SENTENCE, "voice-test")
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("Voice test failed to run: {e}")))?
+}
+
 #[tauri::command]
 pub fn tts_save_settings(
     state: State<'_, AppState>,
     settings: crate::db::TtsSettings,
 ) -> AppResult<crate::db::TtsSettings> {
-    let s = prepare_tts_settings(settings)?;
+    let mut s = prepare_tts_settings(settings)?;
+    if s.provider == "master-voice" {
+        // Stage a managed copy so the voice survives the source file moving
+        // (Downloads cleanup, external drive) and the transcript sidecar has
+        // a writable home.
+        s.master_ref_path = stage_master_voice(&s.master_ref_path, &state.data_dir.join("voices"))?;
+    }
     state.db.save_tts_settings(&s)?;
     Ok(s)
+}
+
+/// Copy the picked reference recording into `<data>/voices/` (plus its
+/// transcript sidecar, when present) and return the staged path. Picking
+/// the staged file again is a no-op. Kept free of Tauri state for tests.
+pub(crate) fn stage_master_voice(src: &str, voices_dir: &std::path::Path) -> AppResult<String> {
+    use crate::error::AppError as E;
+    let src_path = std::path::Path::new(src.trim());
+    if !src_path.is_file() {
+        return Err(E::msg(format!(
+            "The master voice recording was not found at “{}” — pick an audio file with Browse…",
+            src
+        )));
+    }
+    let ext = src_path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_else(|| "wav".into());
+    let dest = voices_dir.join(format!("master-voice.{ext}"));
+    if src_path != dest {
+        std::fs::create_dir_all(voices_dir)?;
+        std::fs::copy(src_path, &dest)?;
+        // Carry the transcript sidecar so whisper is not re-run on the copy.
+        let src_side = sidecar_for(src_path);
+        let dest_side = sidecar_for(&dest);
+        if src_side.is_file() && !dest_side.is_file() {
+            let _ = std::fs::copy(&src_side, &dest_side);
+        }
+    }
+    Ok(dest.to_string_lossy().into_owned())
+}
+
+/// `<file>.ref.txt` transcript sidecar (written by the render script).
+fn sidecar_for(p: &std::path::Path) -> std::path::PathBuf {
+    let mut name = p.file_name().unwrap_or_default().to_os_string();
+    name.push(".ref.txt");
+    p.with_file_name(name)
 }
 
 /// Normalize and validate saved TTS settings (kept free of Tauri state so
 /// the guards above are unit-testable).
 fn prepare_tts_settings(mut s: crate::db::TtsSettings) -> AppResult<crate::db::TtsSettings> {
-    s.provider = if s.provider == "macos-say" {
-        "macos-say".into()
-    } else {
-        "piper".into()
+    s.provider = match s.provider.as_str() {
+        "macos-say" => "macos-say".into(),
+        "master-voice" => "master-voice".into(),
+        _ => "piper".into(),
     };
     s.piper_path = s.piper_path.trim().to_string();
     s.voice_model_path = s.voice_model_path.trim().to_string();
     s.macos_voice = s.macos_voice.trim().to_string();
+    s.master_ref_path = s.master_ref_path.trim().to_string();
     s.speed = s.speed.clamp(0.5, 2.0);
     // Piper fields are only validated while Piper is the selected provider —
     // switching to the macOS voice must stay possible with stale paths set.
@@ -118,6 +207,20 @@ fn prepare_tts_settings(mut s: crate::db::TtsSettings) -> AppResult<crate::db::T
             &s.voice_model_path,
             "a Piper voice model",
             "onnx",
+        )?;
+    }
+    // The Master Voice is defined by its reference recording: selecting it
+    // without one (or with a non-audio path) fails fast with guidance.
+    if s.provider == "master-voice" {
+        if s.master_ref_path.is_empty() {
+            return Err(AppError::msg(
+                "The Master Voice needs a reference recording — pick one with Browse… \
+                 (Voice output → Master voice), e.g. a 30-second sample of the voice to clone.",
+            ));
+        }
+        crate::services::path_validation::validate_audio_path(
+            &s.master_ref_path,
+            "the master voice recording",
         )?;
     }
     Ok(s)
@@ -189,7 +292,7 @@ fn speak_document_inner(state: &AppState, document_id: &str) -> AppResult<Narrat
     let script = crate::services::narration::speakable(&doc_text);
     let words = script.split_whitespace().count();
     let hint = sanitize_hint(&title);
-    let (voice, _) = effective_provider(&s, state.data_dir.join("exports"))?;
+    let (voice, _) = effective_provider(&s, state.resource_dir.as_deref(), state.data_dir.join("exports"))?;
     let audio = voice.render(&script, &hint)?;
     Ok(NarrationResult::from_audio(audio, words, "read_aloud".into()))
 }
@@ -274,7 +377,7 @@ pub async fn tts_narrate(
         let hint = sanitize_hint(&title);
 
         let tts = state.db.get_tts_settings()?;
-        let (voice, _) = effective_provider(&tts, state.data_dir.join("exports"))?;
+        let (voice, _) = effective_provider(&tts, state.resource_dir.as_deref(), state.data_dir.join("exports"))?;
         let audio = voice.render(&script, &format!("{}-{hint}", kind_slug(kind)))?;
         Ok(NarrationResult::from_audio(
             audio,
@@ -351,7 +454,7 @@ mod tests {
             voice_model_path: model.to_string_lossy().into_owned(),
             ..crate::db::TtsSettings::default()
         };
-        let (prov, id) = effective_provider(&s, dir.path().join("out")).unwrap();
+        let (prov, id) = effective_provider(&s, None, dir.path().join("out")).unwrap();
         assert_eq!(id, "piper");
         assert!(prov.check().ready);
     }
@@ -366,7 +469,7 @@ mod tests {
             provider: "piper".into(),
             ..crate::db::TtsSettings::default()
         };
-        let (prov, id) = effective_provider(&s, dir.path().join("out")).unwrap();
+        let (prov, id) = effective_provider(&s, None, dir.path().join("out")).unwrap();
         if id != "macos-say" {
             // `say` unavailable in this environment — nothing to assert.
             return;
@@ -400,5 +503,97 @@ mod tests {
         })
         .unwrap();
         assert_eq!(saved.provider, "macos-say");
+    }
+
+    /// Selecting the Master Voice without a reference recording is rejected
+    /// with actionable guidance instead of silently rendering nothing.
+    #[test]
+    fn master_voice_without_a_recording_is_rejected() {
+        let err = prepare_tts_settings(crate::db::TtsSettings {
+            provider: "master-voice".into(),
+            ..crate::db::TtsSettings::default()
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("reference recording"), "got: {err}");
+        assert!(err.contains("Browse"), "got: {err}");
+    }
+
+    /// A non-audio path (the piper binary, say) is rejected for the master
+    /// reference — the mirror image of the original audio-as-binary guard.
+    #[test]
+    fn master_voice_rejects_non_audio_paths() {
+        let err = prepare_tts_settings(crate::db::TtsSettings {
+            provider: "master-voice".into(),
+            master_ref_path: "/opt/homebrew/bin/piper".into(),
+            ..crate::db::TtsSettings::default()
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("does not look like"), "got: {err}");
+    }
+
+    /// An audio reference passes validation; stale Piper paths stay ignored.
+    #[test]
+    fn master_voice_accepts_an_audio_reference() {
+        let saved = prepare_tts_settings(crate::db::TtsSettings {
+            provider: "master-voice".into(),
+            master_ref_path: "/Users/odere/Downloads/take_I.wav".into(),
+            piper_path: "/stale/path".into(),
+            ..crate::db::TtsSettings::default()
+        })
+        .unwrap();
+        assert_eq!(saved.provider, "master-voice");
+    }
+
+    /// Saving copies the recording into the managed voices dir (so the
+    /// voice survives the source file moving) and carries the transcript
+    /// sidecar along. Re-saving the staged file is a no-op.
+    #[test]
+    fn staging_the_master_voice_copies_file_and_sidecar() {
+        let dir = crate::db::tests::TempDir::new_with_label("tts-stage");
+        let src = dir.path().join("take_I.wav");
+        std::fs::write(&src, b"RIFFdummy").unwrap();
+        std::fs::write(sidecar_for(&src), b"Somebody is in charge.").unwrap();
+        let voices = dir.path().join("voices");
+
+        let staged = stage_master_voice(&src.to_string_lossy(), &voices).unwrap();
+        let staged_path = std::path::Path::new(&staged);
+        assert!(staged_path.is_file(), "staged copy must exist: {staged}");
+        assert!(staged.ends_with("master-voice.wav"), "{staged}");
+        assert_eq!(
+            std::fs::read_to_string(sidecar_for(staged_path)).unwrap(),
+            "Somebody is in charge."
+        );
+
+        // Re-saving the staged path must not copy the file onto itself.
+        let again = stage_master_voice(&staged, &voices).unwrap();
+        assert_eq!(again, staged);
+
+        // A vanished source is an actionable error, not a panic.
+        let err = stage_master_voice("/no/such/recording.wav", &voices)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not found"), "got: {err}");
+    }
+
+    /// Master Voice selected but unusable (no uv/recording on this machine)
+    /// falls back like Piper does, so Render never dies silently.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn unusable_master_voice_falls_back_to_a_working_voice() {
+        let dir = crate::db::tests::TempDir::new_with_label("tts-mvfb");
+        let s = crate::db::TtsSettings {
+            provider: "master-voice".into(),
+            master_ref_path: dir.path().join("missing.wav").to_string_lossy().into(),
+            ..crate::db::TtsSettings::default()
+        };
+        let (prov, id) = effective_provider(&s, None, dir.path().join("out")).unwrap();
+        if id == "master-voice" {
+            // A fully configured Master Voice on this machine — nothing to prove.
+            assert!(prov.check().ready);
+            return;
+        }
+        assert!(prov.check().ready, "fallback '{id}' must actually render");
     }
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import type { DocumentSummary, NarrationKind, NarrationResult, SttStatus, TtsStatus } from '@researchai/shared-types';
+import type { DocumentSummary, NarrationKind, NarrationResult, SttStatus, TtsAudio, TtsStatus } from '@researchai/shared-types';
 import { backend } from '../backend/client';
 import { EmptyState } from '../components/EmptyState';
 import { useStore } from '../state/store';
@@ -55,6 +55,8 @@ export function AudioView() {
   const [narrationKind, setNarrationKind] = useState<NarrationKind>('read_aloud');
   const [speaking, setSpeaking] = useState(false);
   const [narration, setNarration] = useState<NarrationResult | null>(null);
+  const [testAudio, setTestAudio] = useState<TtsAudio | null>(null);
+  const [testingVoice, setTestingVoice] = useState(false);
 
   const reloadStatus = useCallback(async () => {
     try {
@@ -154,6 +156,20 @@ export function AudioView() {
       pushToast('error', err instanceof Error ? err.message : String(err));
     } finally {
       setSpeaking(false);
+    }
+  }
+
+  async function testVoice() {
+    setTestingVoice(true);
+    setTestAudio(null);
+    try {
+      const a = await backend.ttsTestVoice();
+      setTestAudio(a);
+      pushToast('success', `Voice test rendered (${mmss(a.durationMs)}).`);
+    } catch (err) {
+      pushToast('error', err instanceof Error ? err.message : String(err));
+    } finally {
+      setTestingVoice(false);
     }
   }
 
@@ -286,14 +302,20 @@ export function AudioView() {
               <StatusDot
                 ok={tts.binaryFound}
                 warn={
-                  tts.provider === 'macos-say'
-                    ? 'The macOS say command is unavailable'
-                    : 'Piper not found at the configured path'
+                  tts.provider === 'master-voice'
+                    ? 'uv not found on PATH — install with `brew install uv`'
+                    : tts.provider === 'macos-say'
+                      ? 'The macOS say command is unavailable'
+                      : 'Piper not found at the configured path'
                 }
               />{' '}
-              {tts.provider === 'macos-say' ? 'macOS say' : 'piper'}
+              {tts.provider === 'master-voice'
+                ? 'master voice (F5-TTS)'
+                : tts.provider === 'macos-say'
+                  ? 'macOS say'
+                  : 'piper'}
             </span>
-            {tts.provider !== 'macos-say' && (
+            {tts.provider === 'piper' && (
               <span className="tiny muted">
                 <StatusDot ok={tts.modelFound} warn="Voice model (.onnx) not found" /> voice
                 model
@@ -353,8 +375,49 @@ export function AudioView() {
           >
             {speaking ? 'Rendering audio…' : 'Render audio'}
           </button>
+          <button
+            type="button"
+            className="btn ghost"
+            disabled={testingVoice || !tts?.ready}
+            onClick={() => void testVoice()}
+            title="Render a one-sentence sample with the active voice"
+          >
+            {testingVoice
+              ? tts?.provider === 'master-voice'
+                ? 'Cloning voice… (first render may download the model)'
+                : 'Rendering…'
+              : 'Test voice'}
+          </button>
           {!native && <span className="tiny muted">(preview creates a mock audio file)</span>}
         </div>
+        {testAudio && (
+          <div className="transcript-result" style={{ marginTop: '0.5rem' }}>
+            <div className="field-row">
+              <span className="chip status-ready">voice test · {testAudio.format.toUpperCase()}</span>
+              <span className="tiny muted">
+                {mmss(testAudio.durationMs)} · {formatBytes(testAudio.bytes)}
+              </span>
+            </div>
+            {native ? (
+              <audio
+                className="audio-player"
+                controls
+                preload="metadata"
+                src={convertFileSrc(testAudio.path)}
+                onError={(e) => {
+                  const el = e.currentTarget;
+                  const detail = `code=${el.error?.code ?? '?'} message=${el.error?.message ?? '?'}`;
+                  void backend.logFrontend(`voice test player error: ${detail}`);
+                  pushToast('error', `Voice test rendered, but playback failed (${detail}).`);
+                }}
+              />
+            ) : (
+              <p className="tiny muted" style={{ marginTop: '0.5rem' }}>
+                In-app playback is available in the desktop app.
+              </p>
+            )}
+          </div>
+        )}
         <p className="tiny muted" style={{ marginTop: '0.5rem' }}>
           Read-aloud reads the document's own words — no AI needed. Summaries and the podcast
           segment are written by your local model, then spoken by Piper (or the macOS voice).
@@ -419,6 +482,7 @@ export function AudioView() {
           <h2>Voice output</h2>
           <ul className="check-list">
             <li>Piper: local neural voices (.onnx), spec default</li>
+            <li>Master voice: F5-TTS clones your own recording</li>
             <li>macOS say: zero-install fallback voice</li>
             <li>MP3 export via ffmpeg when enabled</li>
             <li>Nothing leaves this machine — synthesis is local</li>

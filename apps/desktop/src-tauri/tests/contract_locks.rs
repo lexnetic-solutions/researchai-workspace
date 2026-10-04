@@ -677,6 +677,7 @@ mod tests {
             speed: 1.0,
             macos_voice: String::new(),
             mp3_enabled: false,
+            master_ref_path: String::new(),
         };
         assert_eq!(
             keys(&s),
@@ -687,6 +688,7 @@ mod tests {
                 "speed",
                 "macosVoice",
                 "mp3Enabled",
+                "masterRefPath",
             ])
         );
     }
@@ -699,6 +701,7 @@ mod tests {
             model_found: true,
             ffmpeg_found: false,
             ready: true,
+            master_assets_cached: true,
             output_dir: "/out".into(),
             settings: TtsSettings::default(),
         };
@@ -710,6 +713,7 @@ mod tests {
                 "modelFound",
                 "ffmpegFound",
                 "ready",
+                "masterAssetsCached",
                 "outputDir",
                 "settings",
             ])

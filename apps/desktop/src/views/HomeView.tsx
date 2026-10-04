@@ -104,14 +104,20 @@ function useSetupChecks(): SetupCheck[] {
     },
     {
       id: 'speech-out',
-      label: 'Voice output (Piper / macOS say)',
+      label: 'Voice output (Master voice / Piper / macOS say)',
       state: tts === null ? 'pending' : tts.ready ? 'ok' : 'attention',
       detail:
         tts == null
           ? 'Checking…'
           : tts.ready
-            ? `Voice ready (${tts.provider === 'macos-say' ? 'macOS say' : 'Piper'}).`
-            : 'Install piper and pick a voice model in Settings → Speech (or use the macOS voice).',
+            ? `Voice ready (${
+                tts.provider === 'master-voice'
+                  ? 'master voice (F5-TTS)'
+                  : tts.provider === 'macos-say'
+                    ? 'macOS say'
+                    : 'Piper'
+              }).`
+            : 'Set a master voice recording, install piper, or use the macOS voice in Settings → Speech.',
       view: 'settings',
     },
   ];

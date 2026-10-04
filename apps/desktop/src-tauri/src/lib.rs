@@ -82,6 +82,7 @@ pub fn run() {
             commands::tts::tts_save_settings,
             commands::tts::tts_speak_document,
             commands::tts::tts_narrate,
+            commands::tts::tts_test_voice,
             commands::system::get_settings,
             commands::system::set_theme,
             commands::system::set_ai_enabled,

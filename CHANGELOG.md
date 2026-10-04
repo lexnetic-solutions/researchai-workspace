@@ -11,6 +11,24 @@ and the stamped section becomes the GitHub Release body.
 
 ## [Unreleased]
 
+### Added
+
+- **Master Voice (F5-TTS voice cloning)**: a new voice provider that
+  clones a reference recording of your own voice and narrates entirely
+  offline. Pick a recording in Settings → Speech (Voice output → Master
+  voice) — it is staged into the app's data folder so the voice survives
+  the source file moving — then render read-alouds, summaries and podcast
+  segments in that voice. Rendering runs through a bundled one-shot
+  script (`services/voice-engine/render.py`, PEP 723, executed with
+  `uv`), so the app ships no Python: the F5-TTS model (~1.3 GB, MIT)
+  downloads once on the first render and everything after that is local.
+  The reference transcript is cached in a sidecar so later renders skip
+  transcription; a failed render automatically retries on CPU after the
+  faster GPU path (the macOS Metal route intermittently aborts).
+  "Test voice" in the Audio tab renders a one-sentence sample of the
+  active voice, and the provider falls back to Piper/macOS say when the
+  Master Voice prerequisites are missing.
+
 ### Fixed
 
 - **In-app audio playback works**: renders succeeded but the built-in

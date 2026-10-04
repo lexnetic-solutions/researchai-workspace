@@ -51,7 +51,8 @@
     "resources": {
       "packaging/resources/sidecar/": "sidecar/",
       "packaging/resources/llama/": "llama/",
-      "packaging/resources/models/": "models/"
+      "packaging/resources/models/": "models/",
+      "../../../services/voice-engine/": "voice-engine/"
     },
     "shortDescription": "Offline-first AI research workspace",
     "longDescription": "Private, offline-first research intelligence: import papers, search and ask with citations, build evidence matrices, export academic artefacts, transcribe lectures and listen to spoken summaries \u2014 all on your machine.",
