@@ -1098,5 +1098,7 @@ work offline on first launch with zero setup.
 - **Korea delivery**: v0.1.4 `ResearchAI.Workspace_0.1.4_x64-setup.exe`
   (508,498,161 B) pulled from the GitHub release, sha256
   `294bf11b7f351b0242cf2496a8865dd0b8591340c5ed453e5f1920421dff473d`,
-  uploaded to an anonymous single-use transfer link (the repo is private, so
-  the raw release URL is not shareable).
+  uploaded to an anonymous transfer link (gofile.io — the host's recorded
+  md5 `bfb8e1ad32dfc1a70f514a4430f6b9aa` matches the source file; the
+  repo is private, so the raw release URL is not shareable, and MEGA
+  requires an account for programmatic upload).
