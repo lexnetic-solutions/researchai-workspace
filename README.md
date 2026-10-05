@@ -30,10 +30,18 @@
 > RIS** into the managed workspace, **transcribes lecture recordings**
 > with local whisper.cpp into timestamped, searchable transcripts, and
 > **speaks documents aloud** — read-aloud, 5/10/20-minute spoken summaries
-> and two-host podcast segments — via local Piper (or the macOS voice).
+> and two-host podcast segments — via a cloned **Master voice (F5-TTS)**,
+> local Piper or the macOS voice.
 > Release CI builds the frozen sidecar + signed-when-configured installers
 > (macOS DMG, Windows NSIS) and the first-run **Setup checklist** verifies
 > every subsystem live.
+
+## New here?
+
+**[docs/USER_GUIDE.md](docs/USER_GUIDE.md)** is a plain-language,
+step-by-step walkthrough: install, first-run checklist, importing documents,
+asking questions with citations, evidence matrices, exports, lecture
+transcription and voice output.
 
 ## Screenshots
 
@@ -51,7 +59,7 @@ packages/            shared-types · research-core · citation-core · retrieval
 services/
   document-engine/   Python sidecar: parsing/OCR/embeddings (Docling, fastembed)
 scripts/             setup, dev and release helpers
-docs/                 ARCHITECTURE · AI · DATABASE · RAG · CITATIONS · SECURITY ·
+docs/                 USER_GUIDE · ARCHITECTURE · AI · DATABASE · RAG · CITATIONS · SECURITY ·
                      PACKAGING · SPEECH_SETUP · PHASE_REPORTS
 tests/               cross-cutting test fixtures (Phase 1+)
 .github/workflows/   CI: lint + test + desktop build

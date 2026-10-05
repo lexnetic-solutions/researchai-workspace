@@ -13,6 +13,15 @@ and the stamped section becomes the GitHub Release body.
 
 ### Added
 
+- **Step-by-step user guide (`docs/USER_GUIDE.md`)**: plain-language
+  walkthrough for people using the app rather than developing it —
+  install (incl. Gatekeeper/SmartScreen notes), first-run setup
+  checklist, projects, imports, search, Ask-AI with citations, evidence
+  matrices, exports, lecture transcription and the three voice-output
+  providers with MP3 conversion; plus a troubleshooting table and the
+  data-folder location for backups. Linked from the README ("New
+  here?") and the docs index.
+
 - **Convert any audio to MP3 on demand**: the Audio tab gains a
   "Convert audio to MP3" action that transcodes any file you pick (WAV,
   AIFF, M4A, FLAC, or a render made before MP3 export was enabled) to an
@@ -40,6 +49,18 @@ and the stamped section becomes the GitHub Release body.
   Master Voice prerequisites are missing.
 
 ### Fixed
+
+- **UTF-8 panics in narration and error reporting**: clipping a document
+  to the prompt budget sliced the raw byte index
+  (`&text[..max_chars]`), so any non-ASCII document (accented words,
+  curly quotes, em-dashes, CJK) panicked the narration command the
+  moment the cut landed mid-character; the clip now cuts at a character
+  boundary and prefers a sentence end. The same byte-slicing pattern in
+  four subprocess-stderr truncations (Piper, macOS say, whisper-cli,
+  ffmpeg) could panic *while formatting an error* — lossy decoding
+  inserts 3-byte U+FFFD right where the limit falls — so all of them
+  now go through a boundary-safe `error::clip_bytes` helper. Covered by
+  five new regression tests.
 
 - **Voice renders can no longer lose hours of work**: the one-shot
   renderer now splits long scripts into ~1,200-word batches inside the

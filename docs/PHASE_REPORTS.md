@@ -1142,3 +1142,41 @@ work offline on first launch with zero setup.
   runs the `tts_convert_to_mp3` live harness, then ffmpeg-decode +
   ffprobe/afinfo verification, writing `/tmp/researchai_render_convert_done.marker`.
   Smoke-tested twice end-to-end (96 s, valid WAV, manifest cleaned).
+
+## Post-plan round — full-project bug review, UTF-8 fixes, user guide
+
+- **Battery**: cargo 170 green (149 lib + 20 contract + 1 live; 2 ignored),
+  tsc 0, pnpm -r 0, ruff 0, pytest 36 — no regressions after the fixes.
+- **UTF-8 panic class fixed (2 sites, 5 new tests)**: `clip_for_prompt`
+  (narration prompt budget) and four subprocess-stderr truncations sliced
+  strings at raw byte indices. A cut landing inside a multi-byte character
+  panics: for narration that meant *any* non-ASCII document failed the
+  Speak action; for stderr it could panic while building the error message
+  itself (lossy decoding inserts 3-byte U+FFFD at the limit). Added
+  `error::clip_bytes` (boundary-safe) and a character-boundary clip that
+  still prefers sentence ends; regression tests cover é/€/emoji/CJK and a
+  0..=len sweep over lossy bytes.
+- **Reviewed and judged safe** (no fix needed): evidence-slice bounds
+  (`.min(len)`), HTTP header parse (`position+4`), RIFF/WAV parsers (byte
+  arrays), `finish_chunked` cleanup ordering (duration read before WAV
+  removal), retry-loop `expect` (loop always runs), analysis ms/token
+  `unwrap` (guarded by `unwrap_or(0) > 0`), frontend error surfacing
+  (consistent toasts; no empty catches), engine supervisor's reuse of an
+  already-answering sidecar (`External` mode — by design, prevents a
+  duplicate spawn on relaunch).
+- **Checklist verified against live state**: DB shows `ai_enabled=true`,
+  bundled Qwen3-0.6B `available` + active, `stt.*` paths set and both
+  files present, `tts.provider=master-voice`; app relaunch logged
+  `voice self-check … ready=true` and `audio self-check: OK duration=6.4s`.
+  The earlier amber rows were a pre-fix build/screenshot, not live state
+  (assistive-access and screen-capture are denied to the harness, so
+  verification is via DB inputs + startup log).
+- **Render health during the round**: the 19,992-word document render
+  progressed batch 1→6/17 with every checkpoint landing (parts + manifest),
+  process at ~900% CPU, ETA ~22:40; conversion watcher armed for the
+  final WAV→MP3 + decode verification.
+- **Docs**: new `docs/USER_GUIDE.md` (install → checklist → projects →
+  imports → search → Ask-AI → evidence → bibliography → exports →
+  transcription → voice output → settings → troubleshooting), README
+  speech line updated (Master voice first-class) and linked from a new
+  "New here?" section.

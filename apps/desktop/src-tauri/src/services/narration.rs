@@ -148,12 +148,21 @@ pub fn speakable(text: &str) -> String {
     out
 }
 
-/// Clip text to `max_chars` at a sentence boundary when possible.
+/// Clip text to `max_chars` characters at a sentence boundary when possible.
+///
+/// The cut is taken at a *character* boundary: slicing the raw byte index
+/// (`&text[..max_chars]`) panics the moment it lands inside a multi-byte
+/// character, which real documents hit constantly (accented words, curly
+/// quotes, em-dashes, CJK).
 fn clip_for_prompt(text: &str, max_chars: usize) -> String {
-    if text.len() <= max_chars {
+    if text.chars().count() <= max_chars {
         return text.to_string();
     }
-    let cut = &text[..max_chars];
+    let byte_end = text
+        .char_indices()
+        .nth(max_chars)
+        .map_or(text.len(), |(i, _)| i);
+    let cut = &text[..byte_end];
     match cut.rfind(". ") {
         Some(i) => cut[..i + 2].to_string(), // keep the ". " so the clip ends on a sentence
         None => cut.to_string(),
@@ -275,5 +284,26 @@ mod tests {
         let clipped = clip_for_prompt(&text, 100);
         assert!(clipped.len() <= 101);
         assert!(clipped.ends_with(". "));
+    }
+
+    #[test]
+    fn clip_never_panics_on_multibyte_text() {
+        // 5 ASCII chars then "é" (2 bytes each): the old byte-based cut at
+        // index 7 landed mid-character and panicked. Non-ASCII documents
+        // (accented words, curly quotes, CJK) hit this on every narration.
+        let text = format!("{}{}", "x".repeat(5), "é".repeat(50));
+        let clipped = clip_for_prompt(&text, 7);
+        assert_eq!(clipped, "xxxxxéé");
+
+        // 4-byte characters (emoji) straddle the cut too.
+        let text = "👍".repeat(40);
+        let clipped = clip_for_prompt(&text, 10);
+        assert_eq!(clipped.chars().count(), 10);
+
+        // A CJK document clips cleanly with no sentence boundary present.
+        let text = "研究问题と方法。".repeat(30);
+        let clipped = clip_for_prompt(&text, 17);
+        assert!(clipped.chars().count() <= 17);
+        assert!(text.starts_with(&clipped));
     }
 }

@@ -203,7 +203,7 @@ impl PiperProvider {
         if !output.status.success() || !wav.exists() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stderr = stderr.trim();
-            let stderr = if stderr.len() > 600 { &stderr[..600] } else { stderr };
+            let stderr = crate::error::clip_bytes(stderr, 600);
             return Err(AppError::msg(format!(
                 "Piper failed on chunk {chunk_index} of {chunk_total} (exit status {}): {}",
                 output.status.code().unwrap_or(-1),
@@ -334,7 +334,7 @@ impl MacOsSayProvider {
         if !output.status.success() || !wav.exists() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stderr = stderr.trim();
-            let stderr = if stderr.len() > 400 { &stderr[..400] } else { stderr };
+            let stderr = crate::error::clip_bytes(stderr, 400);
             return Err(AppError::msg(format!(
                 "macOS say failed on chunk {chunk_index} of {chunk_total} (exit status {}): {}",
                 output.status.code().unwrap_or(-1),

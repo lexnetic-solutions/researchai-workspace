@@ -186,7 +186,7 @@ impl WhisperCppProvider {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stderr = stderr.trim();
-            let stderr = if stderr.len() > 600 { &stderr[..600] } else { stderr };
+            let stderr = crate::error::clip_bytes(stderr, 600);
             return Err(AppError::msg(format!(
                 "whisper-cli failed (exit status {}): {}",
                 output.status.code().unwrap_or(-1),
@@ -391,7 +391,7 @@ pub fn convert_with_ffmpeg(src: &Path, work_dir: &Path) -> AppResult<PathBuf> {
     if !output.status.success() || !out.exists() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stderr = stderr.trim();
-        let stderr = if stderr.len() > 400 { &stderr[..400] } else { stderr };
+        let stderr = crate::error::clip_bytes(stderr, 400);
         return Err(AppError::msg(format!(
             "ffmpeg conversion failed: {}",
             if stderr.is_empty() { "unknown error" } else { stderr }
