@@ -11,8 +11,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/pathway-solutions/researchai-workspace/actions/workflows/ci.yml"><img src="https://github.com/pathway-solutions/researchai-workspace/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <img src="https://img.shields.io/badge/release-v0.1.1-blue" alt="Release v0.1.1" />
+  <a href="https://github.com/lexnetic-solutions/researchai-workspace/actions/workflows/ci.yml"><img src="https://github.com/lexnetic-solutions/researchai-workspace/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/release-v0.1.4-blue" alt="Release v0.1.4" />
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey" alt="Platforms" />
   <img src="https://img.shields.io/badge/licence-MIT-green" alt="Licence: MIT" />
 </p>
@@ -33,8 +33,18 @@
 > and two-host podcast segments — via a cloned **Master voice (F5-TTS)**,
 > local Piper or the macOS voice.
 > Release CI builds the frozen sidecar + signed-when-configured installers
-> (macOS DMG, Windows NSIS) and the first-run **Setup checklist** verifies
-> every subsystem live.
+> (macOS DMG, Windows NSIS, Linux AppImage/deb) and the first-run **Setup
+> checklist** verifies every subsystem live.
+
+## Download
+
+Installers for **macOS** (DMG · Apple Silicon and Intel), **Windows 10/11**
+(NSIS `.exe`) and **Linux** (`.AppImage` self-updating · `.deb`) are built by
+release CI and attached to the
+[Releases page](https://github.com/lexnetic-solutions/researchai-workspace/releases).
+Pick your OS, install, and the first-run **Setup checklist** verifies every
+subsystem live. First-run notes for Gatekeeper (macOS) and SmartScreen
+(Windows) are in [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
 ## New here?
 

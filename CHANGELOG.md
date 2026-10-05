@@ -45,8 +45,17 @@ and the stamped section becomes the GitHub Release body.
   transcription; a failed render automatically retries on CPU after the
   faster GPU path (the macOS Metal route intermittently aborts).
   "Test voice" in the Audio tab renders a one-sentence sample of the
-  active voice, and the provider falls back to Piper/macOS say when the
-  Master Voice prerequisites are missing.
+  active voice, and the provider falls back to Piper/macOS say when  the Master Voice prerequisites are missing.
+
+### Changed
+
+- **Repository now lives at `github.com/lexnetic-solutions/researchai-workspace`**
+  (public): releases, CI badges, and the changelog's compare/release links
+  all point at the new home, and the README gains a **Download** section
+  linking straight to the Releases page with per-OS installer guidance
+  (macOS DMG, Windows NSIS, Linux AppImage/deb) and first-run
+  Gatekeeper/SmartScreen notes. The previous `pathway-solutions` remote is
+  retained as `origin` for history but its Actions billing is disabled.
 
 ### Fixed
 
@@ -310,9 +319,9 @@ Initial release: the complete private, offline-first research workspace
   AppImage and deb installers; Apple signing activates when secrets are
   configured.
 
-[Unreleased]: https://github.com/pathway-solutions/researchai-workspace/compare/v0.1.4...HEAD
-[0.1.4]: https://github.com/pathway-solutions/researchai-workspace/compare/v0.1.3...v0.1.4
-[0.1.3]: https://github.com/pathway-solutions/researchai-workspace/compare/v0.1.2...v0.1.3
-[0.1.2]: https://github.com/pathway-solutions/researchai-workspace/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/pathway-solutions/researchai-workspace/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/pathway-solutions/researchai-workspace/releases/tag/v0.1.0
+[Unreleased]: https://github.com/lexnetic-solutions/researchai-workspace/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/lexnetic-solutions/researchai-workspace/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/lexnetic-solutions/researchai-workspace/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/lexnetic-solutions/researchai-workspace/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/lexnetic-solutions/researchai-workspace/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/lexnetic-solutions/researchai-workspace/releases/tag/v0.1.0
