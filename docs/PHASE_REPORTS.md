@@ -1180,3 +1180,25 @@ work offline on first launch with zero setup.
   transcription → voice output → settings → troubleshooting), README
   speech line updated (Master voice first-class) and linked from a new
   "New here?" section.
+
+## Post-plan round (addendum) — batch-7 tensor overflow → self-healing renderer
+
+- The resumed document render failed at 16:13: batch 7 raised
+  `RuntimeError: The size of tensor a (8569) must match the size of
+  tensor b (8192)` — the F5-TTS DiT backbone precomputes 8192 positions
+  (~87.38 s of audio, `model/backbones/dit.py`), and one internally
+  chunked segment of that batch was predicted ~91 s. Deterministic for
+  that batch, so a plain resume would have failed the same way.
+- Fix in `services/voice-engine/render.py`: `render_batch()` catches the
+  `size of tensor` RuntimeError, splits the text after a sentence near
+  the middle (recursively down to 16 words), renders each half and joins
+  them into the same signature-scoped part — manifest and resume
+  semantics unchanged (signature deliberately not bumped).
+- Verified: py_compile; a synthetic overflow harness (120→70+50 split at
+  a sentence boundary, deep recursion to 20+10, joined WAV valid, temp
+  parts cleaned); then the live resume — parts 1–6 reused from disk and
+  batch 7 re-entered at 16:57 with the fix in place. The bundled copy in
+  /Applications was updated and the bundle re-signed (codesign verify OK).
+- The `config_init_hash_seed` fatal still appears in torch's
+  multiprocessing child stderr (non-fatal: the parent continues
+  rendering) — cause still unexplained, now harmless under checkpoints.

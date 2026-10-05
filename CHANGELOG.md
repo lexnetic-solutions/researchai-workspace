@@ -50,6 +50,19 @@ and the stamped section becomes the GitHub Release body.
 
 ### Fixed
 
+- **One over-long batch can no longer kill a document render**: F5-TTS's
+  DiT backbone caps a single generated segment at 8192 positions (~87 s
+  of audio), and a batch whose segment is predicted slightly longer died
+  with `The size of tensor a (…) must match the size of tensor b (8192)`
+  (this hit batch 7 of 17 on the 19,992-word document at 16:13). The
+  bundled renderer now catches that overflow, splits the batch at a
+  sentence near the middle — recursively if needed — renders each half,
+  and joins them into the same checkpoint part, so the run continues
+  instead of failing; resume from the existing manifest is unaffected
+  (signature unchanged). Verified with a synthetic overflow harness
+  (split, recursion, join, temp cleanup) plus the live resume reusing
+  parts 1–6 and re-entering batch 7.
+
 - **UTF-8 panics in narration and error reporting**: clipping a document
   to the prompt budget sliced the raw byte index
   (`&text[..max_chars]`), so any non-ASCII document (accented words,

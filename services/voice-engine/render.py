@@ -19,6 +19,11 @@ Design notes:
   `<out>-partNN.wav`. A crash loses at most one batch; rerunning the same
   command resumes from the manifest. Parts are concatenated into the final
   WAV only after every batch succeeded, then the part files are removed.
+- **A batch longer than the model's per-segment position limit (8192
+  positions ≈ 87 s) is split in half and retried automatically**, halves
+  joined into the batch's part file — one over-long batch can never fail
+  a render that is otherwise fine (the `size of tensor … must match`
+  RuntimeError from the DiT backbone).
 - **Everything is logged to `<out>.render.log`** as well as stdout, and all
   stdout/stderr writes are made dead-pipe-safe: the app that spawned us can
   exit first (its pipe then has no reader), and a 10-hour render must not
@@ -220,6 +225,64 @@ def save_manifest(path: pathlib.Path, signature: str, total: int, parts: list[st
     tmp.replace(path)  # atomic: a crash never leaves a half-written manifest
 
 
+def render_batch(
+    f5,
+    ref: pathlib.Path,
+    ref_text: str,
+    text: str,
+    speed: float,
+    dest: pathlib.Path,
+    log_ctx: str = "",
+) -> None:
+    """Render `text` into `dest`, self-healing on a model length overflow.
+
+    The DiT backbone precomputes 8192 positions (~87 s of audio); a batch
+    whose internally-chunked segment is predicted slightly longer raises
+    `RuntimeError: The size of tensor a (…) must match the size of tensor b
+    (8192)`. Split the text after a sentence near the middle and retry each
+    half (recursively if needed), then join the halves into `dest`.
+    """
+    try:
+        f5.infer(
+            ref_file=str(ref),
+            ref_text=ref_text,
+            gen_text=text,
+            speed=speed,
+            file_wave=str(dest),
+        )
+        return
+    except RuntimeError as e:
+        if "size of tensor" not in str(e):
+            raise
+        words = text.split()
+        if len(words) < 16:
+            raise  # too small to split further — real failure
+        # Prefer breaking just after a sentence end near the middle.
+        mid = len(words) // 2
+        cut = mid
+        lookahead = max(1, len(words) // 4)
+        for j in range(mid, min(len(words), mid + lookahead + 1)):
+            if words[j].endswith((".", "!", "?", ";")):
+                cut = j + 1
+                break
+        first = " ".join(words[:cut])
+        second = " ".join(words[cut:])
+        log(
+            f"[render] {log_ctx}model length limit hit — splitting "
+            f"{len(words)} words into {len(first.split())}+{len(second.split())} "
+            "and retrying"
+        )
+        a = dest.with_name(dest.stem + ".a" + dest.suffix)
+        b = dest.with_name(dest.stem + ".b" + dest.suffix)
+        try:
+            render_batch(f5, ref, ref_text, first, speed, a, log_ctx)
+            render_batch(f5, ref, ref_text, second, speed, b, log_ctx)
+            concat_parts([a, b], dest)
+        finally:
+            a.unlink(missing_ok=True)
+            b.unlink(missing_ok=True)
+
+
 def concat_parts(parts: list[pathlib.Path], out: pathlib.Path) -> None:
     """Join same-format PCM WAV batches into the final file (exact sizes)."""
     with wave.open(str(parts[0]), "rb") as first:
@@ -352,12 +415,14 @@ def main() -> None:
         log(f"[render] batch {i + 1}/{total} synthesizing ({len(batch.split())} words)")
         tb = time.time()
         try:
-            f5.infer(
-                ref_file=str(ref),
-                ref_text=ref_text,
-                gen_text=batch,
-                speed=args.speed,
-                file_wave=str(part),
+            render_batch(
+                f5,
+                ref,
+                ref_text,
+                batch,
+                args.speed,
+                part,
+                log_ctx=f"batch {i + 1}/{total} ",
             )
         except Exception as e:
             log(f"[render] batch {i + 1}/{total} FAILED: {type(e).__name__}: {e}")
