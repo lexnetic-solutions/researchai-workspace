@@ -9,7 +9,9 @@
 //! Introduction").
 
 use crate::error::{AppError, AppResult};
-use crate::services::ai::{CompletionRequest, CompletionOutput, AiProvider};
+use crate::services::ai::{
+    clip_to_tokens, est_tokens, AiProvider, CompletionOutput, CompletionRequest,
+};
 
 /// Kind of narration to produce.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +55,17 @@ impl NarrationKind {
             Self::Podcast => 1200,
         }
     }
+
+    /// Human label for logs and error messages.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ReadAloud => "read-aloud",
+            Self::Summary5 => "5-minute summary",
+            Self::Summary10 => "10-minute summary",
+            Self::Summary20 => "20-minute summary",
+            Self::Podcast => "podcast segment",
+        }
+    }
 }
 
 const NARRATOR_PREAMBLE: &str = "You write narration scripts that will be read aloud by a \
@@ -65,28 +78,34 @@ const NARRATOR_PREAMBLE: &str = "You write narration scripts that will be read a
 /// `doc_text` should already be the document's assembled text (db:
 /// `get_document_text`). For AI kinds, `provider` is the local model
 /// provider; pass a provider even in No-AI mode only for read_aloud.
+/// `context_size` is the model's context window (Settings → Local AI): the
+/// prompt is budgeted against it so llama-server can't reject the request.
 pub fn build_script(
     kind: NarrationKind,
     title: &str,
     doc_text: &str,
     provider: &dyn AiProvider,
+    context_size: u32,
 ) -> AppResult<String> {
     match kind {
         NarrationKind::ReadAloud => Ok(speakable(doc_text)),
         NarrationKind::Summary5 | NarrationKind::Summary10 | NarrationKind::Summary20 => {
             let words = kind.target_words();
-            let user = format!(
+            let head = format!(
                 "Summarize the following document as a spoken narration of about {words} words.\n\
-                 Open with one sentence that says what the document is and why it matters.\n\
-                 Then walk through the main points in order. Close with the single most \
-                 important takeaway. Use only the document's content.\n\n\
-                 Document title: {title}\n\nDocument text:\n{}",
-                clip_for_prompt(doc_text, prompt_budget(words))
+                 Write the full {words} words: open with one sentence that says what the \
+                 document is and why it matters, then walk through the main points in order \
+                 with a sentence or two each, and close with the single most important \
+                 takeaway. Keep writing until you have covered the whole document — do not \
+                 stop early. Use only the document's content.\n\n\
+                 Document title: {title}\n\nDocument text:\n"
             );
-            complete_spoken(provider, &user)
+            let (max_tokens, doc_tokens) = narrator_budget(kind, context_size, &head)?;
+            let user = format!("{head}{}", clip_to_tokens(doc_text, doc_tokens));
+            complete_spoken(provider, &user, max_tokens)
         }
         NarrationKind::Podcast => {
-            let user = format!(
+            let head = format!(
                 "Write a two-host research podcast segment of about {} words based only on \
                  the following document.\n\
                  Hosts: MAYA (curious, asks the questions a student would) and Dr. PATEL \
@@ -94,23 +113,89 @@ pub fn build_script(
                  Format every line exactly as MAYA: … or Dr. PATEL: … with no other narration.\n\
                  Open with a one-line show greeting, cover the document's main points as a \
                  conversation, and end with Dr. PATEL giving the key takeaway.\n\n\
-                 Document title: {title}\n\nDocument text:\n{}",
-                kind.target_words(),
-                clip_for_prompt(doc_text, 16_000)
+                 Document title: {title}\n\nDocument text:\n",
+                kind.target_words()
             );
-            complete_spoken(provider, &user)
+            let (max_tokens, doc_tokens) = narrator_budget(kind, context_size, &head)?;
+            let user = format!("{head}{}", clip_to_tokens(doc_text, doc_tokens));
+            complete_spoken(provider, &user, max_tokens)
         }
     }
 }
 
+/// Tokens kept free on top of the budgeted prompt + completion for the chat
+/// template and the sampler.
+const CONTEXT_SLACK_TOKENS: usize = 64;
+
+/// A document excerpt smaller than this makes a useless narration — better
+/// to say so than to render something misleading (also the floor that keeps
+/// a degenerate prompt from 400ing).
+const MIN_DOC_TOKENS: usize = 600;
+
+/// Smallest completion allowance worth attempting.
+const MIN_COMPLETION_TOKENS: u32 = 300;
+
+/// The (completion allowance, document token budget) that keeps
+/// system + user + completion inside the model's context window.
+///
+/// llama-server rejects the *whole* request when the prompt doesn't fit —
+/// HTTP 400 `exceed_context_size_error`, the "Local model request failed"
+/// toast that made narration impossible. `scaffold` is the fixed part of the
+/// user prompt (instructions + title), measured so the excerpt gets exactly
+/// whatever is left.
+fn narrator_budget(
+    kind: NarrationKind,
+    context_size: u32,
+    scaffold: &str,
+) -> AppResult<(u32, usize)> {
+    let ctx = context_size as usize;
+    // Spoken prose runs ~1.4 tokens/word; budget double that so the model
+    // never stops mid-sentence, but never more than half the window — the
+    // document still needs room.
+    let wanted = kind.target_words() as usize * 2;
+    let max_tokens = wanted
+        .max(MIN_COMPLETION_TOKENS as usize)
+        .min(ctx / 2) as u32;
+    let room = ctx
+        .saturating_sub(max_tokens as usize)
+        .saturating_sub(CONTEXT_SLACK_TOKENS);
+    let fixed = est_tokens(NARRATOR_PREAMBLE) + est_tokens(scaffold);
+    let doc_tokens = room.saturating_sub(fixed);
+    if max_tokens < MIN_COMPLETION_TOKENS || doc_tokens < MIN_DOC_TOKENS {
+        return Err(AppError::msg(format!(
+            "The local model's context size ({context_size} tokens) is too small to write a \
+             {} — raise Settings → Local AI → context size to 2048 or more (8192 \
+             recommended), then try again.",
+            kind.label()
+        )));
+    }
+    if (max_tokens as usize) < wanted {
+        log::info!(
+            target: "researchai::tts",
+            "narration: {context_size}-token context caps the {} at {max_tokens} completion \
+             tokens — raise Settings → Local AI → context size for the full length",
+            kind.label()
+        );
+    }
+    Ok((max_tokens, doc_tokens))
+}
+
 /// One blocking completion with the narrator system prompt; returns the
 /// cleaned script text.
-fn complete_spoken(provider: &dyn AiProvider, user_prompt: &str) -> AppResult<String> {
+fn complete_spoken(
+    provider: &dyn AiProvider,
+    user_prompt: &str,
+    max_tokens: u32,
+) -> AppResult<String> {
     let req = CompletionRequest {
         system_prompt: NARRATOR_PREAMBLE.to_string(),
         user_prompt: user_prompt.to_string(),
-        max_tokens: 4096,
+        max_tokens,
         temperature: 0.4,
+        // Chain-of-thought tokens spend the completion budget without ever
+        // reaching `content` — a spoken script can come back empty. Spoken
+        // prose needs no reasoning, so ask the template to skip it.
+        disable_thinking: true,
     };
     let out: CompletionOutput = provider.complete(&req)?;
     let script = speakable(&out.text);
@@ -120,11 +205,6 @@ fn complete_spoken(provider: &dyn AiProvider, user_prompt: &str) -> AppResult<St
         ));
     }
     Ok(script)
-}
-
-/// Prompt budget: ~4 chars per token, keep the script instructions dominant.
-fn prompt_budget(target_words: u32) -> usize {
-    (target_words * 40).clamp(6_000, 24_000) as usize
 }
 
 /// Light "speakable" cleanup for text that will be synthesized:
@@ -148,27 +228,6 @@ pub fn speakable(text: &str) -> String {
     out
 }
 
-/// Clip text to `max_chars` characters at a sentence boundary when possible.
-///
-/// The cut is taken at a *character* boundary: slicing the raw byte index
-/// (`&text[..max_chars]`) panics the moment it lands inside a multi-byte
-/// character, which real documents hit constantly (accented words, curly
-/// quotes, em-dashes, CJK).
-fn clip_for_prompt(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let byte_end = text
-        .char_indices()
-        .nth(max_chars)
-        .map_or(text.len(), |(i, _)| i);
-    let cut = &text[..byte_end];
-    match cut.rfind(". ") {
-        Some(i) => cut[..i + 2].to_string(), // keep the ". " so the clip ends on a sentence
-        None => cut.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,7 +236,7 @@ mod tests {
     /// Records the last request and returns a canned spoken answer.
     struct ScriptedProvider {
         answer: String,
-        seen_user: std::sync::Mutex<Option<String>>,
+        seen: std::sync::Mutex<Option<CompletionRequest>>,
     }
 
     impl AiProvider for ScriptedProvider {
@@ -186,7 +245,7 @@ mod tests {
         }
 
         fn complete(&self, req: &CompletionRequest) -> AppResult<CompletionOutput> {
-            *self.seen_user.lock().unwrap() = Some(req.user_prompt.clone());
+            *self.seen.lock().unwrap() = Some(req.clone());
             Ok(CompletionOutput {
                 text: self.answer.clone(),
                 engine: "scripted".into(),
@@ -223,19 +282,21 @@ mod tests {
     fn summary_script_uses_ai_with_spoken_constraints() {
         let p = ScriptedProvider {
             answer: "This paper studies coastal erosion. The key takeaway is adaptation.".into(),
-            seen_user: std::sync::Mutex::new(None),
+            seen: std::sync::Mutex::new(None),
         };
         let script = build_script(
             NarrationKind::Summary5,
             "Coastal Erosion Review",
             "Full document text goes here.",
             &p,
+            8192,
         )
         .unwrap();
-        let seen = p.seen_user.lock().unwrap().clone().unwrap();
-        assert!(seen.contains("650 words"), "{seen}");
-        assert!(seen.contains("Coastal Erosion Review"), "{seen}");
-        assert!(seen.contains("Full document text"), "{seen}");
+        let seen = p.seen.lock().unwrap().clone().unwrap();
+        assert!(seen.user_prompt.contains("650 words"), "{}", seen.user_prompt);
+        assert!(seen.user_prompt.contains("Coastal Erosion Review"), "{}", seen.user_prompt);
+        assert!(seen.user_prompt.contains("Full document text"), "{}", seen.user_prompt);
+        assert!(seen.disable_thinking, "narration must not spend the budget on reasoning");
         assert!(script.contains("key takeaway"));
     }
 
@@ -244,18 +305,19 @@ mod tests {
         let answer = "MAYA: Welcome back.\nDr. PATEL: Today: erosion.\nMAYA: Tell me more.";
         let p = ScriptedProvider {
             answer: answer.into(),
-            seen_user: std::sync::Mutex::new(None),
+            seen: std::sync::Mutex::new(None),
         };
         let script = build_script(
             NarrationKind::Podcast,
             "Doc",
             "Some body text.",
             &p,
+            8192,
         )
         .unwrap();
-        let seen = p.seen_user.lock().unwrap().clone().unwrap();
-        assert!(seen.contains("MAYA"), "{seen}");
-        assert!(seen.contains("Dr. PATEL"), "{seen}");
+        let seen = p.seen.lock().unwrap().clone().unwrap();
+        assert!(seen.user_prompt.contains("MAYA"), "{}", seen.user_prompt);
+        assert!(seen.user_prompt.contains("Dr. PATEL"), "{}", seen.user_prompt);
         assert_eq!(script, speakable(answer));
     }
 
@@ -272,38 +334,185 @@ mod tests {
     fn empty_ai_output_is_an_error() {
         let p = ScriptedProvider {
             answer: "   ".into(),
-            seen_user: std::sync::Mutex::new(None),
+            seen: std::sync::Mutex::new(None),
         };
-        let err = build_script(NarrationKind::Summary5, "T", "body", &p).unwrap_err();
+        let err = build_script(NarrationKind::Summary5, "T", "body", &p, 8192).unwrap_err();
         assert!(err.to_string().contains("empty narration"), "{err}");
     }
 
+    /// Regression: summaries used a fixed 24,000-char clip (~5,700 tokens)
+    /// regardless of the model's window, so llama-server answered HTTP 400
+    /// (`exceed_context_size_error`) and *no* summary could be generated.
     #[test]
-    fn clip_prefers_sentence_boundary() {
-        let text = "One sentence here. ".repeat(1000);
-        let clipped = clip_for_prompt(&text, 100);
-        assert!(clipped.len() <= 101);
-        assert!(clipped.ends_with(". "));
+    fn narration_prompt_fits_a_4096_token_context() {
+        let doc = "Rural poverty programs combine cash transfers with training and credit. "
+            .repeat(6_000); // ~400 KB, far past any window
+        for kind in [
+            NarrationKind::Summary5,
+            NarrationKind::Summary10,
+            NarrationKind::Summary20,
+            NarrationKind::Podcast,
+        ] {
+            let p = ScriptedProvider {
+                answer: "A spoken script.".into(),
+                seen: std::sync::Mutex::new(None),
+            };
+            build_script(kind, "Title", &doc, &p, 4096)
+                .unwrap_or_else(|e| panic!("{kind:?} must be buildable at ctx 4096: {e}"));
+            let req = p.seen.lock().unwrap().clone().unwrap();
+            let prompt = est_tokens(&req.system_prompt) + est_tokens(&req.user_prompt);
+            assert!(
+                prompt + req.max_tokens as usize + CONTEXT_SLACK_TOKENS <= 4096,
+                "{kind:?}: prompt {prompt} + max_tokens {} exceeds the window",
+                req.max_tokens
+            );
+            // The old budget sent 24,000 chars of document every time.
+            assert!(req.user_prompt.len() < 12_000, "{kind:?}: {} chars", req.user_prompt.len());
+        }
+    }
+
+    /// CJK tokenizes at ~1.5 chars/token, so a *character*-based budget sends
+    /// nearly 3x the intended token count. The estimator has to cover it.
+    #[test]
+    fn cjk_document_prompt_fits_the_context_window() {
+        let doc = "农村贫困问题需要综合性的政策干预，现金转移与技能培训相结合。".repeat(3_000);
+        for context_size in [2048_u32, 4096] {
+            let p = ScriptedProvider {
+                answer: "一段口语稿。".into(),
+                seen: std::sync::Mutex::new(None),
+            };
+            build_script(NarrationKind::Summary5, "中国的扶贫政策", &doc, &p, context_size)
+                .unwrap_or_else(|e| panic!("ctx {context_size}: {e}"));
+            let req = p.seen.lock().unwrap().clone().unwrap();
+            let prompt = est_tokens(&req.system_prompt) + est_tokens(&req.user_prompt);
+            assert!(
+                prompt + req.max_tokens as usize + CONTEXT_SLACK_TOKENS <= context_size as usize,
+                "ctx {context_size}: prompt {prompt} + {} > window",
+                req.max_tokens
+            );
+        }
+    }
+
+    /// A window too small to hold instructions + excerpt + script gets an
+    /// actionable message instead of a raw HTTP 400.
+    #[test]
+    fn unusably_small_context_is_a_clear_error() {
+        let p = ScriptedProvider {
+            answer: "script".into(),
+            seen: std::sync::Mutex::new(None),
+        };
+        for context_size in [512_u32, 1024] {
+            let err = build_script(NarrationKind::Summary5, "T", "body text", &p, context_size)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("context size"), "{err}");
+            assert!(err.contains("2048"), "{err}");
+            assert!(err.contains("5-minute summary"), "{err}");
+        }
     }
 
     #[test]
-    fn clip_never_panics_on_multibyte_text() {
-        // 5 ASCII chars then "é" (2 bytes each): the old byte-based cut at
-        // index 7 landed mid-character and panicked. Non-ASCII documents
-        // (accented words, curly quotes, CJK) hit this on every narration.
-        let text = format!("{}{}", "x".repeat(5), "é".repeat(50));
-        let clipped = clip_for_prompt(&text, 7);
-        assert_eq!(clipped, "xxxxxéé");
+    fn read_aloud_needs_no_context_budget() {
+        // Read-aloud never calls the model, so even a tiny window works.
+        let p = ScriptedProvider {
+            answer: "unused".into(),
+            seen: std::sync::Mutex::new(None),
+        };
+        let s = build_script(NarrationKind::ReadAloud, "T", "# Notes\ntext", &p, 512).unwrap();
+        assert!(s.contains("Notes"));
+        assert!(p.seen.lock().unwrap().is_none(), "no completion should run");
+    }
 
-        // 4-byte characters (emoji) straddle the cut too.
-        let text = "👍".repeat(40);
-        let clipped = clip_for_prompt(&text, 10);
-        assert_eq!(clipped.chars().count(), 10);
+    /// Live end-to-end: the real bundled llama-server and the real model,
+    /// through the exact prompt path `tts_narrate` uses. Guards the HTTP 400
+    /// (`exceed_context_size_error`) that made every summary impossible to
+    /// generate. Skips itself when the install isn't on this machine.
+    ///
+    /// cargo test live_narration -- --ignored --exact \
+    ///   services::narration::tests::live_narration_generates_a_script
+    #[test]
+    #[ignore = "needs the bundled llama-server + a GGUF model on this machine"]
+    fn live_narration_generates_a_script() {
+        let resources = std::path::Path::new(
+            "/Applications/ResearchAI Workspace.app/Contents/Resources",
+        );
+        let binary = std::env::var("RESEARCHAI_LLAMA_SERVER")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                crate::services::bundled::resolve_llama_binary("", Some(resources)).ok()
+            });
+        let data_dir = std::env::var("RESEARCHAI_DATA_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+                    .join("Library/Application Support/app.researchai.workspace")
+            });
+        let model = std::env::var("RESEARCHAI_MODEL")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| data_dir.join("models/Qwen3-0.6B-Q4_K_M.gguf"));
 
-        // A CJK document clips cleanly with no sentence boundary present.
-        let text = "研究问题と方法。".repeat(30);
-        let clipped = clip_for_prompt(&text, 17);
-        assert!(clipped.chars().count() <= 17);
-        assert!(text.starts_with(&clipped));
+        let Some(binary) = binary.filter(|b| b.is_file()) else {
+            eprintln!("skip: no llama-server — install the app or set RESEARCHAI_LLAMA_SERVER");
+            return;
+        };
+        if !model.is_file() {
+            eprintln!("skip: no model at {}", model.display());
+            return;
+        }
+
+        let port = crate::services::llm_runtime::find_free_port().expect("free TCP port");
+        let mut child = std::process::Command::new(&binary)
+            .args([
+                "-m",
+                model.to_string_lossy().as_ref(),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                &port.to_string(),
+                "--ctx-size",
+                "4096",
+                "-fa",
+                "off",
+                "--cache-reuse",
+                "256",
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn llama-server");
+
+        let provider = crate::services::ai::LlamaCppProvider::new(
+            &format!("http://127.0.0.1:{port}"),
+            "qwen-live",
+            None,
+        );
+        let mut ready = false;
+        for _ in 0..90 {
+            if provider.health_ok() {
+                ready = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+
+        let outcome = if !ready {
+            Err("llama-server never became ready".to_string())
+        } else {
+            // A document far past the window: the pre-fix code sent a flat
+            // 24,000 chars (~5,700 tokens) and the server answered HTTP 400.
+            let doc = "Rural poverty programs combine cash transfers with training and credit. "
+                .repeat(3_000);
+            build_script(NarrationKind::Summary5, "Poverty Alleviation", &doc, &provider, 4096)
+                .map(|s| s.split_whitespace().count())
+                .map_err(|e| e.to_string())
+        };
+
+        let _ = child.kill();
+        let _ = child.wait();
+
+        let words = outcome.expect("narration must succeed against the real model");
+        assert!(words > 50, "script is implausibly short: {words} words");
+        eprintln!("live narration produced {words} words");
     }
 }

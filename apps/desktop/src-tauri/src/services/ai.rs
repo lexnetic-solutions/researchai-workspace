@@ -30,6 +30,77 @@ pub struct CompletionRequest {
     pub user_prompt: String,
     pub max_tokens: u32,
     pub temperature: f32,
+    /// Ask the chat template to skip chain-of-thought (`enable_thinking`).
+    /// Reasoning tokens are billed against `max_tokens` but never reach
+    /// `content`, so a narration script can come back empty with thinking on.
+    pub disable_thinking: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Prompt sizing — llama-server rejects an over-long prompt outright (HTTP 400,
+// `exceed_context_size_error`), so prompts must be budgeted in *tokens* before
+// they are sent. Without a tokenizer we estimate per character: Latin-ish text
+// runs ~3.6 chars/token, CJK/Hangul/Kana/emoji ~1 token each. Estimating high
+// only clips an excerpt a little earlier; estimating low fails the request.
+// ---------------------------------------------------------------------------
+
+/// Rough token cost of one character.
+fn tokens_per_char(c: char) -> f64 {
+    // CJK ideograms, radicals, kana, Hangul, fullwidth forms, emoji.
+    let wide = matches!(
+        c as u32,
+        0x1100..=0x11FF
+            | 0x2E80..=0x303F
+            | 0x3040..=0x30FF
+            | 0x3100..=0x312F
+            | 0x3130..=0x318F
+            | 0x31C0..=0x31EF
+            | 0x3200..=0x32FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xA960..=0xA97F
+            | 0xAC00..=0xD7AF
+            | 0xF900..=0xFAFF
+            | 0xFE30..=0xFE4F
+            | 0xFF00..=0xFFEF
+            | 0x1F000..=0x1FAFF
+            | 0x20000..=0x2FFFF
+    );
+    if wide { 1.1 } else { 0.28 }
+}
+
+/// Estimated token count of `s` (chat-template overhead not included).
+pub fn est_tokens(s: &str) -> usize {
+    let mut cost = 0.0f64;
+    for c in s.chars() {
+        cost += tokens_per_char(c);
+    }
+    cost.ceil() as usize
+}
+
+/// Clip `text` to a rough token budget. The cut lands on a character
+/// boundary (byte slicing panics on multi-byte text) and prefers a sentence
+/// ending, so the excerpt reads as complete sentences.
+pub fn clip_to_tokens(text: &str, budget: usize) -> String {
+    let mut cost = 0.0f64;
+    let mut byte_end = text.len();
+    for (i, c) in text.char_indices() {
+        cost += tokens_per_char(c);
+        // Compare the *rounded* cost: est_tokens() of the cut must never
+        // exceed the budget by even one token, or the request can 400.
+        if cost.ceil() as usize > budget {
+            byte_end = i;
+            break;
+        }
+    }
+    if byte_end == text.len() {
+        return text.to_string();
+    }
+    let cut = &text[..byte_end];
+    match cut.rfind(". ") {
+        Some(i) => cut[..i + 2].to_string(), // keep the ". " so the clip ends on a sentence
+        None => cut.to_string(),
+    }
 }
 
 /// Result of one completion. `engine`/`model` land in the UI debug panel.
@@ -130,6 +201,11 @@ impl LlamaCppProvider {
             // Long generations on CPU-bound 8 GB machines; the global timeout
             // caps a full request+body read at 10 minutes.
             .timeout_global(Some(Duration::from_secs(600)))
+            // Return non-2xx responses instead of turning them into errors,
+            // so `status_error` can show llama-server's explanation ("request
+            // (5699 tokens) exceeds the available context size") rather than
+            // the bare "http status: 400".
+            .http_status_as_error(false)
             .build();
         Self {
             agent: ureq::Agent::new_with_config(config),
@@ -151,7 +227,9 @@ impl LlamaCppProvider {
     /// loaded and ready; 503 while it is still loading weights).
     pub fn health_ok(&self) -> bool {
         match self.agent.get(format!("{}/health", self.base_url)).call() {
-            Ok(_) => true,
+            // With http_status_as_error off, 503 (still loading) arrives as a
+            // normal response — only 2xx means ready.
+            Ok(resp) => resp.status().is_success(),
             Err(_) => false,
         }
     }
@@ -169,7 +247,7 @@ impl LlamaCppProvider {
     }
 
     fn request_body(&self, req: &CompletionRequest, stream: bool) -> serde_json::Value {
-        serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.model,
             "messages": [
                 { "role": "system", "content": req.system_prompt },
@@ -181,7 +259,16 @@ impl LlamaCppProvider {
             // llama-server honours this OpenAI option and sends a final
             // usage-only chunk — lets us report token counts on streams too.
             "stream_options": { "include_usage": true },
-        })
+        });
+        if req.disable_thinking {
+            // Qwen3-class chat templates think by default; reasoning tokens
+            // spend `max_tokens` without ever reaching `content`. The bundled
+            // llama-server renders templates with Jinja on, and this kwarg
+            // turns thinking off for this one request (unused kwargs are
+            // ignored by templates that don't reference them).
+            body["chat_template_kwargs"] = serde_json::json!({ "enable_thinking": false });
+        }
+        body
     }
 
     fn status_error(mut resp: ureq::http::Response<ureq::Body>) -> AppError {
@@ -426,6 +513,7 @@ mod tests {
             user_prompt: "What does [1] claim?".into(),
             max_tokens: 256,
             temperature: 0.2,
+            disable_thinking: false,
         }
     }
 
@@ -499,5 +587,86 @@ mod tests {
         let p = LlamaCppProvider::new(&url, "qwen-test", None);
         let err = p.complete(&sample_request()).unwrap_err().to_string();
         assert!(err.contains("503"), "error should carry status: {err}");
+    }
+
+    /// Regression: an over-long prompt used to surface as the useless toast
+    /// "Local model request failed: http status: 400" because ureq swallowed
+    /// the body. The server's explanation is the whole diagnosis.
+    #[test]
+    fn llama_provider_shows_the_server_body_on_a_400() {
+        let body = "{\"error\":{\"code\":400,\"message\":\"request (5699 tokens) exceeds the available context size (4096 tokens), try increasing it\",\"type\":\"exceed_context_size_error\"}}";
+        let resp = format!(
+            "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let url = serve_once(Box::leak(resp.into_boxed_str()));
+        let p = LlamaCppProvider::new(&url, "qwen-test", None);
+        let err = p.complete(&sample_request()).unwrap_err().to_string();
+        assert!(err.contains("400"), "{err}");
+        assert!(err.contains("exceeds the available context size"), "{err}");
+    }
+
+    /// 503 means "still loading weights": health must read it as not-ready
+    /// now that non-2xx responses are no longer turned into transport errors.
+    #[test]
+    fn health_ok_reads_503_as_not_ready() {
+        let down = serve_once(
+            "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+        );
+        let p = LlamaCppProvider::new(&down, "qwen-test", None);
+        assert!(!p.health_ok(), "503 must not read as ready");
+
+        let up = serve_once("HTTP/1.1 200 OK\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}");
+        let p = LlamaCppProvider::new(&up, "qwen-test", None);
+        assert!(p.health_ok(), "200 must read as ready");
+    }
+
+    #[test]
+    fn est_tokens_is_conservative_for_both_scripts() {
+        // English: ~4.2 chars/token in practice, we assume 3.6 → never under.
+        let english = "Rural poverty programs combine cash transfers with training. ".repeat(50);
+        let tokens = est_tokens(&english);
+        assert!(english.len() / 5 < tokens && tokens < english.len() / 3, "{tokens}");
+
+        // CJK is ~1.5 chars/token — a char-count budget would have sent 40% of
+        // the real size and llama-server would 400.
+        let cjk = "农村贫困问题需要综合性的政策干预。".repeat(50);
+        assert_eq!(est_tokens(&cjk), (cjk.chars().count() as f64 * 1.1).ceil() as usize);
+
+        assert_eq!(est_tokens(""), 0);
+    }
+
+    #[test]
+    fn clip_to_tokens_respects_the_budget_and_multibyte_text() {
+        let text = "One sentence here. ".repeat(500);
+        let clipped = clip_to_tokens(&text, 100);
+        assert!(est_tokens(&clipped) <= 100, "{} tokens", est_tokens(&clipped));
+        assert!(clipped.ends_with(". "));
+
+        // Cuts land on character boundaries: byte slicing would panic on any
+        // of these (accents, emoji, CJK).
+        let text = format!("{}{}", "x".repeat(5), "é".repeat(200));
+        clip_to_tokens(&text, 7);
+        let text = "👍".repeat(40);
+        let clipped = clip_to_tokens(&text, 10);
+        assert!(clipped.chars().count() <= 10);
+        let text = "研究问题と方法。".repeat(30);
+        assert!(text.starts_with(&clip_to_tokens(&text, 17)));
+
+        assert_eq!(clip_to_tokens("whole text", 0), "");
+        assert_eq!(clip_to_tokens("whole text", 1000), "whole text");
+    }
+
+    #[test]
+    fn disable_thinking_adds_the_chat_template_kwarg_only_when_asked() {
+        let p = LlamaCppProvider::new("http://127.0.0.1:1", "qwen-test", None);
+        let mut req = sample_request();
+        assert!(p.request_body(&req, false).get("chat_template_kwargs").is_none());
+        req.disable_thinking = true;
+        let body = p.request_body(&req, false);
+        assert_eq!(
+            body["chat_template_kwargs"]["enable_thinking"],
+            serde_json::json!(false)
+        );
     }
 }

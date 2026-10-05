@@ -346,6 +346,7 @@ fn doc_findings(
         user_prompt: prompt,
         max_tokens: 512,
         temperature: 0.2,
+        disable_thinking: false,
     })?;
 
     let citations_used =
@@ -389,6 +390,7 @@ fn synthesize(
         user_prompt: prompt,
         max_tokens: 768,
         temperature: 0.2,
+        disable_thinking: false,
     })?;
 
     // Citations here refer to document items (1..=findings.len()).

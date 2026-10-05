@@ -1202,3 +1202,65 @@ work offline on first launch with zero setup.
 - The `config_init_hash_seed` fatal still appears in torch's
   multiprocessing child stderr (non-fatal: the parent continues
   rendering) — cause still unexplained, now harmless under checkpoints.
+
+## Post-plan round (addendum) — narration HTTP 400 → prompts budgeted in tokens
+
+- **Report**: "fix the bug its still not allowing me to generate Audio" —
+  Audio tab → Speak a document → *5-minute summary* → Render audio, toast
+  `Local model request failed: http status: 400` (screenshot 19:00:58).
+- **Root cause**: `llama-server.log` at the same second —
+  `send_error … request (5699 tokens) exceeds the available context size
+  (4096 tokens)`. `narration::build_script` budgeted the excerpt in
+  *characters* (`prompt_budget = target_words × 40`, clamped to 24,000
+  chars ≈ 5,700 tokens) and hard-coded `max_tokens: 4096`, against a
+  4096-token window (`ai.context_size=4096`), with no context fitting at
+  all. The podcast branch hard-coded a 16,000-char clip and failed the
+  same way (the 4,390-token entry earlier in the log). Ask-AI already had
+  a fitting loop; narration never got one.
+- **Fix**:
+  - `services/ai.rs`: tokenizer-free `est_tokens` / `clip_to_tokens`
+    (~3.6 chars/token for Latin text, ~1 token/char for CJK, Hangul,
+    kana, fullwidth and emoji), cutting on a character boundary and
+    comparing the *rounded* cost so the estimate can never exceed the
+    budget by a single token; `CompletionRequest.disable_thinking` adds
+    `chat_template_kwargs {"enable_thinking": false}` for that request
+    (reasoning tokens are spent against `max_tokens` without ever
+    reaching `content` — an empty-narration risk); the agent now sets
+    `http_status_as_error(false)` so `status_error` shows llama-server's
+    own body ("request (N tokens) exceeds the available context size")
+    instead of `http status: 400`, with `health_ok` updated to require
+    `is_success()` (503 = still loading weights).
+  - `services/narration.rs`: `build_script(..., context_size)`;
+    `narrator_budget` gives the completion `min(2 × target words, ctx/2)`
+    (floor 300) and the document everything left after the system prompt,
+    scaffold and 64 tokens of template slack (floor 600 → an actionable
+    "raise Settings → Local AI → context size to 2048 or more" error
+    rather than a raw 400); the excerpt is clipped with `clip_to_tokens`.
+  - `services/analysis.rs`: the evidence-fitting loop compares
+    `est_tokens` against a token room instead of `len() × 4` characters —
+    the char heuristic under-counts CJK evidence by nearly 3×.
+  - `commands/tts.rs`: passes `ai.context_size`, the same value the
+    server was started with.
+- **Prompt quality measured, not assumed**: against the real document
+  (`tts-…-A.text.txt`, 130,918 chars) through a real llama-server at
+  ctx 4096 — original head: prompt 2,378 tokens, `finish=stop`, **146
+  words**; strengthened length instruction ("write the full N words … do
+  not stop early"): **283 words**, completion 410/1,300, no 400. Estimator
+  check: est 2,687 vs actual 2,378 (conservative as intended). The new
+  head shipped.
+- **Verification**: `cargo test` — 156 lib + 20 contract + 1 live, 0 fail,
+  3 ignored. New tests: prompt fits a 4096-token window for all four AI
+  kinds with a 400 KB document (regression for the 24,000-char budget),
+  CJK fits at 2048 and 4096, too-small window returns the guidance error,
+  read-aloud needs no budget, `est_tokens`/`clip_to_tokens` bounds and
+  multibyte safety, HTTP-400 body surfaced, health reads 503 as
+  not-ready, kwarg emitted only when asked. New `#[ignore]`d live test
+  (`services::narration::tests::live_narration_generates_a_script`)
+  starts the bundled llama-server and narrates end-to-end — 249 words.
+  tsc 0, `pnpm -r test` 0, ruff 0, pytest 0. clippy still unavailable
+  for this toolchain (unchanged limitation).
+- **Round environment**: the long document render continued through the
+  round (batch 7 split part `part007.a.a.wav` landed 19:26 under the
+  self-healing renderer); the app's llama-server idle-unloaded at 19:10
+  as designed; two scratch probe servers were spawned and killed on
+  :53901 around the measurements.

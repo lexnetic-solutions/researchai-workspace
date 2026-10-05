@@ -424,7 +424,15 @@ pub async fn tts_narrate(
             .map(|d| d.title.unwrap_or_else(|| d.file_name))
             .unwrap_or_else(|| "document".into());
 
-        let script = crate::services::narration::build_script(kind, &title, &doc_text, &provider)?;
+        // Budget the prompt against the same context window the server was
+        // started with — an over-long prompt is rejected outright (HTTP 400).
+        let script = crate::services::narration::build_script(
+            kind,
+            &title,
+            &doc_text,
+            &provider,
+            ai.context_size,
+        )?;
         let words = script.split_whitespace().count();
         let hint = sanitize_hint(&title);
 

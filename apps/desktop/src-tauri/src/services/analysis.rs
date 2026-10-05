@@ -13,7 +13,9 @@ use serde::Serialize;
 
 use crate::db::{AnalysisRow, Db};
 use crate::error::{AppError, AppResult};
-use crate::services::ai::{AiProvider, CompletionOutput, CompletionRequest};
+use crate::services::ai::{
+    clip_to_tokens, est_tokens, AiProvider, CompletionOutput, CompletionRequest,
+};
 use crate::services::retrieval;
 
 /// Bump when prompt wording changes so old analyses stay interpretable.
@@ -217,31 +219,33 @@ pub(crate) fn prepare_ask(
     let total_excerpts = evidence.len();
 
     // The prompt must fit the model's context window: llama-server rejects
-    // the entire request when it doesn't (the bundled starter model runs a
-    // small ctx). Budget conservatively — ~4 chars/token for the context
-    // minus the completion allowance and chat-template slack — then drop
-    // excerpts from the end until the assembled prompt fits, truncating the
-    // first excerpt as a last resort so an ask never hard-fails on size.
+    // the entire request when it doesn't (HTTP 400 `exceed_context_size_error`).
+    // Budget in *tokens* — a "4 chars per token" char budget under-counts
+    // CJK-heavy evidence by nearly 3x and lets the 400 through — keeping the
+    // completion allowance and chat-template slack free, then drop excerpts
+    // from the end until the assembled prompt fits, truncating the first
+    // excerpt as a last resort so an ask never hard-fails on size.
     let (mut system_prompt, mut user_prompt) = build_prompt(req.mode, question, &evidence);
-    let budget = (req.context_size as usize)
+    let room_tokens = (req.context_size as usize)
         .saturating_sub(req.max_tokens as usize)
-        .saturating_sub(128) // chat template + sampler slack
-        * 4;
+        .saturating_sub(128); // chat template + sampler slack
+    let fits = |s: &str, u: &str| est_tokens(s) + est_tokens(u) <= room_tokens;
     let mut dropped = 0usize;
     let mut truncated = false;
-    while system_prompt.len() + user_prompt.len() > budget && evidence.len() > 1 {
+    while !fits(&system_prompt, &user_prompt) && evidence.len() > 1 {
         evidence.pop();
         dropped += 1;
         let (s, u) = build_prompt(req.mode, question, &evidence);
         system_prompt = s;
         user_prompt = u;
     }
-    if system_prompt.len() + user_prompt.len() > budget {
+    if !fits(&system_prompt, &user_prompt) {
         if let Some(first) = evidence.first_mut() {
-            let fixed =
-                (system_prompt.len() + user_prompt.len()).saturating_sub(first.text.len());
-            let room = budget.saturating_sub(fixed);
-            first.text = first.text.chars().take(room).collect();
+            let fixed = (est_tokens(&system_prompt) + est_tokens(&user_prompt))
+                .saturating_sub(est_tokens(&first.text));
+            let room = room_tokens.saturating_sub(fixed);
+            let original = std::mem::take(&mut first.text);
+            first.text = clip_to_tokens(&original, room);
             truncated = true;
             let (s, u) = build_prompt(req.mode, question, &evidence);
             system_prompt = s;
@@ -361,6 +365,8 @@ pub fn ask(db: &Db, provider: &dyn AiProvider, req: &AskRequest) -> AppResult<An
         user_prompt: prepared.user_prompt,
         max_tokens: req.max_tokens,
         temperature: req.temperature,
+        // Grounded asks keep the model's default thinking behaviour.
+        disable_thinking: false,
     })?;
 
     finish_ask(db, req, &prepared.evidence, prepared.warnings, completion)
@@ -387,6 +393,7 @@ pub fn ask_streaming(
             user_prompt: prepared.user_prompt,
             max_tokens: req.max_tokens,
             temperature: req.temperature,
+            disable_thinking: false,
         },
         on_delta,
     )?;

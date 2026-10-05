@@ -50,6 +50,33 @@ and the stamped section becomes the GitHub Release body.
 
 ### Fixed
 
+- **Summaries and podcast narration generate again (HTTP 400 fixed)**:
+  picking any AI narration (5/10/20-minute summary or podcast) failed
+  instantly with `Local model request failed: http status: 400`. The
+  narration prompt was budgeted in *characters* (target words × 40, up to
+  24,000 chars ≈ 5,700 tokens) while the bundled model runs a
+  4096-token window, so llama-server rejected the entire request
+  (`exceed_context_size_error` — its log shows 5,699-token narration
+  prompts). Prompts are now budgeted in tokens against the configured
+  context size, keeping the completion allowance and chat-template slack
+  free, using a tokenizer-free estimator (~3.6 chars/token for Latin text,
+  ~1 token/char for CJK — a "4 chars per token" heuristic under-counts
+  CJK by nearly 3× and lets the 400 through). A window genuinely too small
+  for a narration now returns an actionable "raise the context size"
+  message instead of a raw 400, and Ask-AI's evidence fitting uses the
+  same estimator. Narration requests also disable the model's
+  chain-of-thought (`enable_thinking: false` for that request only):
+  reasoning tokens are spent against the script budget without ever
+  reaching the text and could yield an empty narration. Errors now carry
+  llama-server's own explanation ("request (N tokens) exceeds the
+  available context size") instead of the bare status, and the summary
+  instruction steers length explicitly — measured on the real
+  130,918-character document through the real model: 2,378-token prompt,
+  283-word script, no 400 (the first cut produced 146 words). Covered by
+  new unit tests (English + CJK fits at 2048/4096, too-small-window error,
+  HTTP-400 body surfacing, health 503) and a live `--ignored` test that
+  starts the bundled llama-server and narrates end-to-end.
+
 - **One over-long batch can no longer kill a document render**: F5-TTS's
   DiT backbone caps a single generated segment at 8192 positions (~87 s
   of audio), and a batch whose segment is predicted slightly longer died
