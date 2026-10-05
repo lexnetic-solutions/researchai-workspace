@@ -41,6 +41,17 @@ and the stamped section becomes the GitHub Release body.
 
 ### Fixed
 
+- **Voice renders can no longer lose hours of work**: the one-shot
+  renderer now splits long scripts into ~1,200-word batches inside the
+  same process, checkpoints each finished batch (with a
+  signature-scoped manifest) and resumes automatically if interrupted —
+  a crash costs at most one batch instead of the whole narration. All
+  logging is dead-pipe-safe and mirrored to a `<output>.render.log`
+  sidecar, so a render whose launching app has exited keeps going *and*
+  leaves a full record (previously the output and the reason both
+  vanished when the app's pipe closed). Synthesis also runs strictly
+  offline (cached model only) and multiprocessing children inherit a
+  valid `PYTHONHASHSEED`.
 - **Setup checklist no longer cries wolf about the AI model**: the Local
   AI item showed "Add a GGUF model…" whenever the runtime had idled out
   (models unload after 10 idle minutes by design). It now checks for an

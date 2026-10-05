@@ -556,6 +556,25 @@ mod tests {
         assert!(wav.is_file());
     }
 
+    /// Live harness for the Audio tab's "Convert to MP3" button: drives the
+    /// exact function the `tts_convert_to_mp3` command runs, against a real
+    /// machine file (e.g. a freshly finished document render).
+    ///
+    /// `RESEARCHAI_CONVERT=/path/to/audio.wav cargo test --lib \
+    ///   live_convert_real_file -- --ignored`
+    #[test]
+    #[ignore = "live harness: set RESEARCHAI_CONVERT to a real audio file"]
+    fn live_convert_real_file_to_mp3() {
+        let path = std::env::var("RESEARCHAI_CONVERT")
+            .expect("set RESEARCHAI_CONVERT to the audio file to convert");
+        let out = convert_to_mp3_inner(&path).expect("conversion failed");
+        assert_eq!(out.format, "mp3");
+        assert!(out.path.ends_with(".mp3"), "{}", out.path);
+        assert!(std::path::Path::new(&out.path).is_file());
+        assert!(out.bytes > 1_000, "suspiciously small: {}", out.bytes);
+        assert!(out.duration_ms > 0, "ffprobe returned no duration");
+    }
+
     /// A fully configured Piper (binary + voice present) must stay selected.
     #[cfg(unix)]
     #[test]

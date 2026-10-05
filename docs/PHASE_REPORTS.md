@@ -1124,3 +1124,21 @@ work offline on first launch with zero setup.
   mirror (the GitHub `releases/latest` asset 404s) into the data models
   dir, and wrote both `stt.*` paths into settings. Live proof: whisper
   transcribed the app's own voice-test WAV end-to-end in 1.5 s.
+- **11.6-hour render lost → renderer v2**: the first full document
+  render (started 22:45 via the app) exited at ~10:26 with no output.
+  No crash report, no OOM, no disk/sleep issue — and no traceback,
+  because its stdout/stderr pipe had died with the app at 06:03. Three
+  structural fixes in `render.py`: (1) dead-pipe-safe stdout/stderr
+  wrappers so logging can never kill the render, (2) everything mirrored
+  to a `<out>.render.log` sidecar (the record that would have told us
+  why), (3) ~1,200-word batches checkpointed to a signature-scoped
+  manifest with automatic resume — 17 batches for this 19,992-word
+  document, so a repeat failure costs ≤1 batch. Also forced
+  `HF_HUB_OFFLINE`, and set a valid `PYTHONHASHSEED` for torch's
+  multiprocessing children (the `config_init_hash_seed` fatal that shows
+  up behind the MPS aborts — still unexplained, children die at spawn,
+  but non-fatal and now bounded by checkpoints). Restarted as a detached
+  daemon with a second daemon watching for completion: on landing it
+  runs the `tts_convert_to_mp3` live harness, then ffmpeg-decode +
+  ffprobe/afinfo verification, writing `/tmp/researchai_render_convert_done.marker`.
+  Smoke-tested twice end-to-end (96 s, valid WAV, manifest cleaned).
