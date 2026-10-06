@@ -20,6 +20,7 @@ on:
       - '.github/workflows/release.yml'
       - '.github/workflows/release-dry-run.yml'
       - 'scripts/package/collect-sidecar.mjs'
+      - 'scripts/release/build-install-guide.sh'
       - 'scripts/release/extract-notes.sh'
       - 'scripts/release/make-updater-manifest.sh'
       - 'CHANGELOG.md'
@@ -280,6 +281,14 @@ jobs:
             --artifacts updater-artifacts \
             --out latest.json
           jq -e '.platforms | keys | length == 8' latest.json >/dev/null
+          # Mirror release.yml: a space (or %20) in a platform URL means
+          # the manifest names Tauri's local file, not the published
+          # asset — that download would 404 on every self-update.
+          if jq -r '.platforms[].url' latest.json | grep -qE '%20| '; then
+            echo "::error::latest.json platform URL carries a space (asset-name mismatch)"
+            jq -r '.platforms[].url' latest.json
+            exit 1
+          fi
           echo "Manifest rehearsal OK for v$VER"
           jq '{version, pub_date, platforms: (.platforms | keys)}' latest.json
 
@@ -297,10 +306,20 @@ jobs:
           fi
           : > SHA256SUMS
           for f in "${files[@]}"; do
-            (cd "$(dirname "$f")" && sha256sum "$(basename "$f")") >> SHA256SUMS
+            # Mirror release.yml exactly: GitHub publishes release assets
+            # with spaces replaced by dots (Tauri's local filename keeps
+            # the space), so checksums must name what users download.
+            name=$(basename "$f")
+            sum=$( (cd "$(dirname "$f")" && sha256sum "$name") | cut -d' ' -f1)
+            printf '%s  %s\n' "$sum" "${name// /.}" >> SHA256SUMS
           done
           sort -k2 SHA256SUMS -o SHA256SUMS
           cat SHA256SUMS
+          if grep -qvE '^[0-9a-f]{64}  [^ ]+$' SHA256SUMS; then
+            echo "::error::SHA256SUMS is not '<hash>  <space-free published name>' on every line"
+            cat SHA256SUMS
+            exit 1
+          fi
           echo "SHA256SUMS rehearsal OK: $(wc -l < SHA256SUMS) entries"
 
       # Rehearse the install-guide step exactly as release.yml runs it.

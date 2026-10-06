@@ -239,6 +239,14 @@ jobs:
             --notes release-notes.md \
             --out latest.json
           jq . latest.json
+          # A percent-encoded space in a URL means the manifest still
+          # points at Tauri's local filename; GitHub publishes the
+          # dotted name, so that URL would 404 on every self-update.
+          if jq -r '.platforms[].url' latest.json | grep -qE '%20| '; then
+            echo "::error::latest.json platform URL carries a space (asset-name mismatch)"
+            jq -r '.platforms[].url' latest.json
+            exit 1
+          fi
 
       # Exactly the five installer files — updater artefacts are covered by
       # their minisign signatures instead. Hard-fails if a leg's installer
@@ -256,10 +264,26 @@ jobs:
           fi
           : > SHA256SUMS
           for f in "${files[@]}"; do
-            (cd "$(dirname "$f")" && sha256sum "$(basename "$f")") >> SHA256SUMS
+            # GitHub stores release assets with spaces replaced by dots
+            # (Tauri emits "ResearchAI Workspace_0.1.5_x64.dmg"; the
+            # published asset is "ResearchAI.Workspace_0.1.5_x64.dmg" —
+            # verified: a %20 URL 404s, the dotted one 200s). Record the
+            # name users will actually download so `sha256sum -c` works
+            # and the install guide's links resolve.
+            name=$(basename "$f")
+            sum=$( (cd "$(dirname "$f")" && sha256sum "$name") | cut -d' ' -f1)
+            printf '%s  %s\n' "$sum" "${name// /.}" >> SHA256SUMS
           done
           sort -k2 SHA256SUMS -o SHA256SUMS
           cat SHA256SUMS
+          # Every entry must be the published name: 64-hex hash, two
+          # spaces, then a filename with NO spaces (a space in the name
+          # breaks both `sha256sum -c` and the download links).
+          if grep -qvE '^[0-9a-f]{64}  [^ ]+$' SHA256SUMS; then
+            echo "::error::SHA256SUMS is not '<hash>  <space-free published name>' on every line"
+            cat SHA256SUMS
+            exit 1
+          fi
 
       # Per-OS download/install guide for the top of the release page.
       # Filenames come from SHA256SUMS, so the guide can never link an

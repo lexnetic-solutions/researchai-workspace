@@ -34,15 +34,30 @@ PAGE=$(printf '%s' "$BASE" | sed 's|/download/|/tag/|')
 REPO=$(printf '%s' "$BASE" | sed -E 's|https://github.com/([^/]+/[^/]+)/.*|\1|')
 [ "$REPO" != "$BASE" ] || die "cannot derive owner/repo from $BASE"
 
-pick() { # <literal filename suffix> -> filename
-  # Literal suffix comparison, NOT a regex: `awk -v` escape handling of
-  # backslashes differs between implementations (bwk awk locally keeps
-  # `\.`, mawk on Linux rewrites it), which broke the first CI run.
+pick() { # <literal filename suffix> -> published filename
+  # Two portability traps, each from a real CI failure:
+  #   1. The filename is everything AFTER the hash separator, not $2:
+  #      Tauri emits "ResearchAI Workspace_0.1.5_x64.dmg" (with a
+  #      space), so whitespace field-splitting truncates it to
+  #      "ResearchAI" and no suffix ever matches.
+  #   2. The suffix match is a literal comparison, NOT a regex: `awk -v`
+  #      escape handling of backslashes differs between implementations
+  #      (bwk awk locally keeps `\.`, mawk on Linux rewrites it).
+  # GitHub stores release assets with spaces replaced by dots (verified:
+  # a %20 download URL 404s, the dotted one 200s), so spaces are
+  # rewritten before matching — the returned name is always the one the
+  # download URL actually serves.
   local f
-  f=$(awk -v s="$1" \
-    'length($2) >= length(s) && substr($2, length($2) - length(s) + 1) == s { print $2 }' \
-    "$SUMS")
+  f=$(awk -v s="$1" '
+    {
+      n = $0
+      sub(/^[^ ]+ +[*]?/, "", n)   # strip "<sha256><separator>[*]"
+      gsub(/ /, ".", n)         # local Tauri name -> published name
+      if (length(n) >= length(s) && substr(n, length(n) - length(s) + 1) == s)
+        print n
+    }' "$SUMS")
   [ -n "$f" ] || die "no asset ending with '$1' in $SUMS"
+  [ "$(printf '%s\n' "$f" | grep -c .)" -eq 1 ] || die "more than one asset ends with '$1' in $SUMS"
   printf '%s' "$f"
 }
 

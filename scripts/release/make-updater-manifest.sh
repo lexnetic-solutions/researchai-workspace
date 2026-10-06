@@ -67,6 +67,12 @@ read_sig() { # <artifact path> -> signature string
 release_url() { # <artifact path> -> percent-encoded download URL
   local name enc
   name=$(basename "$1")
+  # GitHub stores release assets with spaces replaced by dots (verified on
+  # v0.1.5: Tauri emits "ResearchAI Workspace_…_x64-setup.exe" but the
+  # published asset is "ResearchAI.Workspace_…" — a %20 URL 404s, the
+  # dotted one 200s). Build the URL from the published name or every
+  # updater download with a space in it fails.
+  name=${name// /.}
   enc=$(jq -rn --arg v "$name" '$v | @uri')
   printf 'https://github.com/%s/releases/download/%s/%s' "$REPO" "$TAG" "$enc"
 }
@@ -146,10 +152,13 @@ self_test() {
   echo "Fixture release notes." > "$NOTES"
 
   local f
+  # The setup.exe fixture deliberately carries a SPACE: that is what Tauri
+  # actually emits locally, and the URL it maps to must be the published
+  # (dotted) name GitHub stores.
   for f in \
     "ResearchAI.Workspace_9.9.9_aarch64.app.tar.gz" \
     "ResearchAI.Workspace_9.9.9_x64.app.tar.gz" \
-    "ResearchAI.Workspace_9.9.9_x64-setup.exe" \
+    "ResearchAI Workspace_9.9.9_x64-setup.exe" \
     "ResearchAI.Workspace_9.9.9_amd64.AppImage"; do
     echo "fixture bytes for $f" > "$tmp/$f"
     # Single-line base64, exactly like `tauri signer sign` writes.
@@ -189,6 +198,16 @@ self_test() {
   # URL encoding: no raw spaces may survive in any platform URL.
   if jq -r '.platforms[].url' "$OUT" | grep -q ' '; then
     die "self-test: unencoded space in a platform URL"
+  fi
+
+  # GitHub sanitizes uploaded asset names (spaces -> dots), so a URL built
+  # from the raw Tauri filename would 404. The space-named fixture above
+  # must therefore map to the published dotted name — with no %20 left.
+  jq -e '.platforms["windows-x86_64-nsis"].url
+    | endswith("/ResearchAI.Workspace_9.9.9_x64-setup.exe")' "$OUT" >/dev/null \
+    || die "self-test: space-named fixture did not map to the published (dotted) URL"
+  if jq -r '.platforms[].url' "$OUT" | grep -q '%20'; then
+    die "self-test: platform URL percent-encodes a space (would 404)"
   fi
 
   echo "self-test OK"
