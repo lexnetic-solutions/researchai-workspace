@@ -1264,3 +1264,45 @@ work offline on first launch with zero setup.
   self-healing renderer); the app's llama-server idle-unloaded at 19:10
   as designed; two scratch probe servers were spawned and killed on
   :53901 around the measurements.
+
+## Post-plan round (addendum) — v0.1.5 released with all five installers
+
+- **Release cut (user-gated on full CI green)**: CI on the fixed runner
+  matrix went 6/6 green first (Python, TypeScript, and all four desktop
+  builds — the Intel leg's first pass ever), then `v0.1.5` was tagged
+  and published at
+  <https://github.com/lexnetic-solutions/researchai-workspace/releases/tag/v0.1.5>
+  with five installers: `aarch64.dmg`, `x64.dmg`, `x64-setup.exe`,
+  `amd64.AppImage`, `amd64.deb` (~0.5–0.7 GB each). The release body
+  carries the CHANGELOG `[0.1.5]` section (9,758 chars).
+- **Runner retirement found while waiting**: `macos-13` was retired by
+  GitHub on 2025-12-04, so the Intel job had queued forever (earlier
+  rounds misread that as free-runner lag), and `macos-14` retires
+  2026-11-02 after active brownouts. All three workflow matrices moved
+  to `macos-15` / `macos-15-intel` (x86_64 image supported to 2027-08),
+  and `docs/OPERATIONS.md` no longer documents the dead label as a
+  quirk.
+- **First real Intel-mac build found a real portability bug**: the
+  first v0.1.5 release run (37396022791, 4 of 5 assets) failed at
+  PyInstaller because upstream stopped shipping macOS x86_64 wheels
+  after `onnxruntime` 1.23.2 while the lock pinned 1.30.0 — `uv sync
+  --group build` aborted before the bundle step, and CI could never
+  have caught it earlier because the retired label meant the job never
+  ran. `services/document-engine/pyproject.toml` now pins 1.23.2 for
+  `darwin`/`x86_64` with `python_version < '3.14'` and 1.30.0 for every
+  other environment; `uv lock` records both resolutions with
+  per-environment `resolution-markers`, `uv lock --check` passes, and a
+  marker-aware lock audit verified all 58 packages active in the
+  macOS-x86_64/Python-3.12 build environment have compatible wheels.
+  The release and tag were deleted and re-cut from the fixed commit
+  `f075a20`; run 37398794095 finished 4/4 green (including
+  `macos-15-intel`), and CI on `f075a20` completed 6/6 success.
+- **Credential gotcha fixed**: `git -c credential.helper=osxkeychain`
+  appends *after* the repo-local `gh` helper, so pushes aimed at the
+  private `origin` authenticated as the new account and returned
+  "Repository not found". The working invocation clears the helper list
+  first (`-c credential.helper=` before the override); all three heads
+  now match `f075a20` and the `v0.1.5` tag exists on both remotes.
+- **Verification**: ruff 0, pytest 36 passed, `uv sync --group build`
+  0 (the exact release step), `uv lock --check` 0; working tree clean
+  at round end.
