@@ -34,18 +34,23 @@ PAGE=$(printf '%s' "$BASE" | sed 's|/download/|/tag/|')
 REPO=$(printf '%s' "$BASE" | sed -E 's|https://github.com/([^/]+/[^/]+)/.*|\1|')
 [ "$REPO" != "$BASE" ] || die "cannot derive owner/repo from $BASE"
 
-pick() { # <filename regex> -> filename
+pick() { # <literal filename suffix> -> filename
+  # Literal suffix comparison, NOT a regex: `awk -v` escape handling of
+  # backslashes differs between implementations (bwk awk locally keeps
+  # `\.`, mawk on Linux rewrites it), which broke the first CI run.
   local f
-  f=$(awk -v re="$1" '$2 ~ re { print $2 }' "$SUMS")
-  [ -n "$f" ] || die "no asset matching $1 in $SUMS"
+  f=$(awk -v s="$1" \
+    'length($2) >= length(s) && substr($2, length($2) - length(s) + 1) == s { print $2 }' \
+    "$SUMS")
+  [ -n "$f" ] || die "no asset ending with '$1' in $SUMS"
   printf '%s' "$f"
 }
 
-ARM64=$(pick '_aarch64\.dmg$')
-X64DMG=$(pick '_x64\.dmg$')
-EXE=$(pick '_x64-setup\.exe$')
-APPIMAGE=$(pick '\.AppImage$')
-DEB=$(pick '\.deb$')
+ARM64=$(pick '_aarch64.dmg')
+X64DMG=$(pick '_x64.dmg')
+EXE=$(pick '_x64-setup.exe')
+APPIMAGE=$(pick '.AppImage')
+DEB=$(pick '.deb')
 
 VERSION=$(printf '%s' "$X64DMG" | sed -E 's/.*_([0-9]+\.[0-9]+\.[0-9]+)_x64\.dmg$/\1/')
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "could not parse a version from $X64DMG"
