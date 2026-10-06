@@ -69,6 +69,18 @@ and the stamped section becomes the GitHub Release body.
 
 ### Fixed
 
+- **Intel Mac release build (`onnxruntime` wheel gap)**: the first-ever
+  `macos-15-intel` build failed at PyInstaller — upstream stopped
+  shipping macOS x86_64 wheels after `onnxruntime` 1.23.2, so the locked
+  1.30.0 had nothing to install on Intel Macs and `uv sync` aborted
+  before the bundle step. CI never caught this earlier because the old
+  `macos-13` runner label was retired, so the Intel job had never
+  actually run. The engine now pins 1.23.2 for `darwin`/`x86_64` via
+  environment markers while every other platform keeps 1.30.0, and the
+  lockfile records both resolutions (verified: all 58 packages active in
+  the macOS-x86_64/Python-3.12 build environment have compatible
+  wheels).
+
 - **Summaries and podcast narration generate again (HTTP 400 fixed)**:
   picking any AI narration (5/10/20-minute summary or podcast) failed
   instantly with `Local model request failed: http status: 400`. The

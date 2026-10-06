@@ -13,6 +13,11 @@ dependencies = [
     "charset-normalizer>=3.4",
     "fastembed>=0.8.1",
     "reportlab>=4.2",
+    # onnxruntime stopped shipping macOS x86_64 wheels after 1.23.2, so Intel Macs
+    # (the macos-15-intel release target) get that last compatible build while every
+    # other platform keeps the fastembed-recommended latest release.
+    "onnxruntime==1.23.2; sys_platform == 'darwin' and platform_machine == 'x86_64' and python_version < '3.14'",
+    "onnxruntime==1.30.0; sys_platform != 'darwin' or platform_machine != 'x86_64' or python_version >= '3.14'",
 ]
 
 [dependency-groups]
