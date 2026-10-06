@@ -282,3 +282,23 @@ jobs:
           jq -e '.platforms | keys | length == 8' latest.json >/dev/null
           echo "Manifest rehearsal OK for v$VER"
           jq '{version, pub_date, platforms: (.platforms | keys)}' latest.json
+
+      # Rehearse the checksum step exactly as release.yml runs it.
+      - name: Build SHA256SUMS (rehearsal)
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find updater-artifacts -type f \
+            \( -name '*_aarch64.dmg' -o -name '*_x64.dmg' -o -name '*_x64-setup.exe' \
+               -o -name '*_amd64.AppImage' -o -name '*_amd64.deb' \) | sort)
+          if [ "${#files[@]}" -ne 5 ]; then
+            echo "::error::expected 5 installers, found ${#files[@]}"
+            printf '%s\n' "${files[@]}"
+            exit 1
+          fi
+          : > SHA256SUMS
+          for f in "${files[@]}"; do
+            (cd "$(dirname "$f")" && sha256sum "$(basename "$f")") >> SHA256SUMS
+          done
+          sort -k2 SHA256SUMS -o SHA256SUMS
+          cat SHA256SUMS
+          echo "SHA256SUMS rehearsal OK: $(wc -l < SHA256SUMS) entries"

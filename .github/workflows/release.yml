@@ -240,7 +240,50 @@ jobs:
             --out latest.json
           jq . latest.json
 
-      - name: Attach manifest to the release
+      # Exactly the five installer files — updater artefacts are covered by
+      # their minisign signatures instead. Hard-fails if a leg's installer
+      # is missing so a release never ships without its checksums.
+      - name: Build SHA256SUMS for the installers
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find updater-artifacts -type f \
+            \( -name '*_aarch64.dmg' -o -name '*_x64.dmg' -o -name '*_x64-setup.exe' \
+               -o -name '*_amd64.AppImage' -o -name '*_amd64.deb' \) | sort)
+          if [ "${#files[@]}" -ne 5 ]; then
+            echo "::error::expected 5 installers, found ${#files[@]}"
+            printf '%s\n' "${files[@]}"
+            exit 1
+          fi
+          : > SHA256SUMS
+          for f in "${files[@]}"; do
+            (cd "$(dirname "$f")" && sha256sum "$(basename "$f")") >> SHA256SUMS
+          done
+          sort -k2 SHA256SUMS -o SHA256SUMS
+          cat SHA256SUMS
+
+      # Surface the checksums on the release page itself (the SHA256SUMS
+      # asset is the machine-readable copy). Marker-guarded so a re-run
+      # does not append twice; a body edit failure only warns.
+      - name: Append checksums to the release body
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" latest.json --clobber -R "$GITHUB_REPOSITORY"
+        run: |
+          set -euo pipefail
+          gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --json body -q .body > body-current.md
+          if grep -q '### SHA-256 checksums' body-current.md; then
+            echo "release body already carries checksums"
+            exit 0
+          fi
+          {
+            cat body-current.md
+            printf '\n### SHA-256 checksums\n\n```text\n'
+            cat SHA256SUMS
+            printf '```\n'
+          } > body-new.md
+          gh release edit "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --body-file body-new.md \
+            || echo "::warning::could not append checksums to the release body (SHA256SUMS asset still attached)"
+
+      - name: Attach manifest and checksums to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" latest.json SHA256SUMS --clobber -R "$GITHUB_REPOSITORY"
