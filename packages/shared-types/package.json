@@ -1,6 +1,6 @@
 {
   "name": "@researchai/shared-types",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "Shared TypeScript types for the ResearchAI IPC boundary, frontend, and services",
   "type": "module",
