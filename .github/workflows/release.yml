@@ -261,27 +261,50 @@ jobs:
           sort -k2 SHA256SUMS -o SHA256SUMS
           cat SHA256SUMS
 
-      # Surface the checksums on the release page itself (the SHA256SUMS
-      # asset is the machine-readable copy). Marker-guarded so a re-run
-      # does not append twice; a body edit failure only warns.
-      - name: Append checksums to the release body
+      # Per-OS download/install guide for the top of the release page.
+      # Filenames come from SHA256SUMS, so the guide can never link an
+      # asset that wasn't published.
+      - name: Build install guide
+        run: |
+          set -euo pipefail
+          scripts/release/build-install-guide.sh SHA256SUMS \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME" \
+            install-guide.md
+
+      # Surface the guide + checksums on the release page itself (the
+      # SHA256SUMS asset is the machine-readable copy). Marker/heading
+      # guards make re-runs idempotent; a body edit failure only warns.
+      # NOTE: `gh release edit` takes --notes-file (not --body-file).
+      - name: Compose release body (guide + notes + checksums)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --json body -q .body > body-current.md
-          if grep -q '### SHA-256 checksums' body-current.md; then
-            echo "release body already carries checksums"
-            exit 0
+          BODY=body-current.md
+          if ! grep -q 'researchai-install-guide' "$BODY"; then
+            {
+              cat install-guide.md
+              printf '\n<a id="release-notes"></a>\n\n## Release notes\n'
+              cat "$BODY"
+            } > body-guided.md
+            BODY=body-guided.md
           fi
-          {
-            cat body-current.md
-            printf '\n### SHA-256 checksums\n\n```text\n'
-            cat SHA256SUMS
-            printf '```\n'
-          } > body-new.md
-          gh release edit "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --body-file body-new.md \
-            || echo "::warning::could not append checksums to the release body (SHA256SUMS asset still attached)"
+          if ! grep -q '### SHA-256 checksums' "$BODY"; then
+            {
+              cat "$BODY"
+              printf '\n<a id="sha-256-checksums"></a>\n\n### SHA-256 checksums\n\nVerify downloads with `shasum -a 256 <file>` (macOS) or `sha256sum <file>` (Linux):\n\n```text\n'
+              cat SHA256SUMS
+              printf '```\n\n'
+            } > body-final.md
+            BODY=body-final.md
+          fi
+          if [ "$BODY" != body-current.md ]; then
+            gh release edit "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --notes-file "$BODY" \
+              || echo "::warning::could not update the release body (SHA256SUMS asset still attached)"
+          else
+            echo "release body already carries guide and checksums"
+          fi
 
       - name: Attach manifest and checksums to the release
         env:

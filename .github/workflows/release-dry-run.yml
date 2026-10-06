@@ -302,3 +302,20 @@ jobs:
           sort -k2 SHA256SUMS -o SHA256SUMS
           cat SHA256SUMS
           echo "SHA256SUMS rehearsal OK: $(wc -l < SHA256SUMS) entries"
+
+      # Rehearse the install-guide step exactly as release.yml runs it.
+      - name: Build install guide (rehearsal)
+        run: |
+          set -euo pipefail
+          scripts/release/build-install-guide.sh SHA256SUMS \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/v0.0.0-rehearsal" \
+            install-guide.md
+          grep -q 'researchai-install-guide' install-guide.md
+          [ "$(grep -c 'releases/download/v0.0.0-rehearsal' install-guide.md)" -eq 5 ]
+          # nav (4) + trailing checksums link (1) = 5 prefixed fragments
+          [ "$(grep -o '#user-content-' install-guide.md | wc -l)" -ge 5 ]
+          if grep -q '{{' install-guide.md; then
+            echo "::error::unresolved placeholder in install guide"
+            exit 1
+          fi
+          echo "install guide rehearsal OK"
