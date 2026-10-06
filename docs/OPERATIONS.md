@@ -67,7 +67,7 @@ Three workflows in [.github/workflows](../.github/workflows):
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `ci.yml` | every push | TypeScript typecheck+tests, Python engine tests, desktop Rust tests on 4 OS matrix (macos-14, macos-13, windows-latest, ubuntu-24.04) |
+| `ci.yml` | every push | TypeScript typecheck+tests, Python engine tests, desktop Rust tests on 4 OS matrix (macos-15, macos-15-intel, windows-latest, ubuntu-24.04) |
 | `release.yml` | tag `v*` | Builds + attaches signed/ad-hoc installers for the same 4 targets |
 | `release-dry-run.yml` | manual (`workflow_dispatch`) | Same 4-target build, uploads artifacts, attaches nothing — the rehearsal for releases |
 
@@ -81,9 +81,13 @@ Operations notes:
   ran — a test that has "always passed" may simply have never executed on that
   OS. The first runs to reach the desktop matrix surfaced real platform bugs
   (see §6).
-- **Free-runner queues.** `macos-13` (Intel) jobs routinely queue for hours and
-  can outlive the run. Arm64 macs and Windows/ubuntu usually start within
-  minutes. Judge a run by its job-level conclusions, not the wall clock.
+- **Retired runner labels never start.** GitHub retired `macos-13` entirely
+  (2025-12-04) — jobs requesting it sit `queued` forever with no runner, which
+  was originally mistaken for free-runner queue lag. The matrix now uses
+  `macos-15-intel` (GitHub's last x86_64 image, supported to 2027-08) and
+  `macos-15`; `macos-14` retires 2026-11-02 with brownouts before then. Judge a
+  run by its job-level conclusions, and treat a label GitHub has removed as a
+  workflow bug, not a slow queue.
 - Linux CI targets Ubuntu 24.04; the .deb baseline is glibc ≥ 2.38.
 
 ---
@@ -99,10 +103,11 @@ Operations notes:
    (`release-bump` skill) *before* tagging. A missing section falls back
    to a generic body (never an empty one) and the dry-run rehearses the
    extraction step.
-4. Expected assets: `aarch64.dmg`, `x64.dmg` (macos-13, may lag hours),
-   `x64-setup.exe`, `amd64.AppImage`, `amd64.deb`.
-5. Watch asset attachment at job level; the macos-13 job finishing *after* you
-   edit the release is normal — assets attach automatically.
+4. Expected assets: `aarch64.dmg`, `x64.dmg`, `x64-setup.exe`,
+   `amd64.AppImage`, `amd64.deb` — all five attach within the run (the Intel
+   leg on `macos-15-intel` is slower than arm64 but no longer unbounded).
+5. Watch asset attachment at job level; an asset attaching *after* you edit
+   the release is normal — assets attach automatically.
 
 Tag discipline: tags are immutable history. If a release must include newer
 commits, cut a **new tag** (v0.1.x+1); do not re-point the old one unless you
@@ -179,8 +184,9 @@ kept beyond uploaded artifacts.
 
 ## 7. Known operational decisions pending
 
-- **Intel macos-13 runner:** keep (paid runner) or drop the x64 .dmg target —
-  free-queue latency makes it the least reliable leg of every matrix.
+- **Intel runner cost/speed:** the x64 .dmg target now builds on
+  `macos-15-intel` (4 vCPU, slower than arm64); drop the leg if release
+  latency ever matters more than Intel coverage.
 - **Apple signing:** code paths for signed builds are gated and ready; waiting
   on Developer ID secrets.
 - **Real-hardware validation:** first clean-machine install + end-to-end pass

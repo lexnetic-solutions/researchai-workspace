@@ -51,6 +51,14 @@ and the stamped section becomes the GitHub Release body.
 
 ### Changed
 
+- **The Intel (x64) macOS installer now actually builds**: CI requested the
+  `macos-13` runner label, which GitHub retired entirely on 2025-12-04 —
+  those jobs queued forever with no runner (mistaken for slow free-runner
+  queues), so no release ever shipped an x64 `.dmg`. All three workflows
+  now build on `macos-15-intel` (GitHub's last x86_64 image, supported to
+  2027-08) for x64 and `macos-15` for Apple Silicon, ahead of the
+  `macos-14` retirement on 2026-11-02.
+
 - **Repository now lives at `github.com/lexnetic-solutions/researchai-workspace`**
   (public): releases, CI badges, and the changelog's compare/release links
   all point at the new home, and the README gains a **Download** section
