@@ -26,10 +26,21 @@ export type ViewId =
   | 'exports'
   | 'settings';
 
+export interface ToastAction {
+  readonly label: string;
+  readonly onClick: () => void;
+}
+
 export interface Toast {
   readonly id: number;
   readonly kind: 'success' | 'error' | 'info';
   readonly message: string;
+  /**
+   * Optional call-to-action (e.g. "Download & restart" for an available
+   * update). Toasts with an action persist until dismissed — they carry a
+   * decision the user should not lose to a timeout.
+   */
+  readonly action?: ToastAction;
 }
 
 /**
@@ -53,7 +64,7 @@ interface AppState {
   settings: AppSettings | null;
   setSettings: (s: AppSettings) => void;
   toasts: Toast[];
-  pushToast: (kind: Toast['kind'], message: string) => void;
+  pushToast: (kind: Toast['kind'], message: string, action?: ToastAction) => void;
   dismissToast: (id: number) => void;
   reloadProjects: () => Promise<void>;
   loading: boolean;
@@ -94,13 +105,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const clearImportRequest = useCallback(() => setImportRequest(null), []);
 
-  const pushToast = useCallback((kind: Toast['kind'], message: string) => {
-    const id = Date.now() + Math.floor(Math.random() * 1000);
-    setToasts((prev) => [...prev, { id, kind, message }]);
-    window.setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 5000);
-  }, []);
+  const pushToast = useCallback(
+    (kind: Toast['kind'], message: string, action?: ToastAction) => {
+      const id = Date.now() + Math.floor(Math.random() * 1000);
+      setToasts((prev) => [...prev, { id, kind, message, action }]);
+      if (!action) {
+        window.setTimeout(() => {
+          setToasts((prev) => prev.filter((t) => t.id !== id));
+        }, 5000);
+      }
+    },
+    [],
+  );
 
   const dismissToast = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));

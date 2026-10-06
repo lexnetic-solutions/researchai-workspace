@@ -9,6 +9,15 @@ export function ToastStack() {
       {toasts.map((t) => (
         <div key={t.id} className={`toast toast-${t.kind}`}>
           <span className="toast-message">{t.message}</span>
+          {t.action && (
+            <button
+              type="button"
+              className="toast-action"
+              onClick={t.action.onClick}
+            >
+              {t.action.label}
+            </button>
+          )}
           <button
             type="button"
             className="toast-dismiss"

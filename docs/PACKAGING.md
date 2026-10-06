@@ -67,6 +67,44 @@ Artefacts land in `apps/desktop/src-tauri/target/release/bundle/`.
    user workspace.
 5. Update THIRD_PARTY_LICENSES.md from actual lockfiles.
 
+## Self-updates (Tauri updater)
+
+Installed copies poll the GitHub release channel and update in place
+(wired in after v0.1.5 — older builds carry no updater code):
+
+- **Endpoint** (baked into `tauri.conf.json` → `plugins.updater.endpoints`):
+  `https://github.com/lexnetic-solutions/researchai-workspace/releases/latest/download/latest.json`
+- `bundle.createUpdaterArtifacts: true` makes every `tauri build` produce
+  and **sign** the updater artefacts: `<app>.app.tar.gz` + `.sig` (macOS —
+  arch-qualified by a workflow step because the bundler names it after the
+  `.app`), `<setup>.exe` + `.sig` (Windows NSIS), `<app>.AppImage` + `.sig`
+  (Linux). The dmg/deb are install-only, not update artefacts.
+- **Keys**: the private key signs every build, so local `tauri build` and
+  CI both need `TAURI_SIGNING_PRIVATE_KEY` (+
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`). The release key lives at
+  `~/.tauri/researchai-workspace.key` (password beside it) on this machine
+  and in the same-named repository secrets on the `lexnetic` remote. The
+  matching pubkey is embedded in `tauri.conf.json` — **losing the private
+  key permanently breaks self-update**; installed apps verify against that
+  pubkey only. Never commit the key; do not reuse it for dry-runs (they
+  generate an ephemeral throwaway key instead).
+- **Manifest**: the final `release.yml` job runs
+  `scripts/release/make-updater-manifest.sh` over all four legs' signed
+  artefacts and attaches `latest.json` to the release. It hard-fails when
+  an artefact or `.sig` is missing, so a broken manifest never publishes.
+  Self-test: `bash scripts/release/make-updater-manifest.sh --self-test`.
+- **In-app flow**: silent check ~6 s after startup → actionable toast →
+  download (progress emitted every 64 MB) → signature verification →
+  install → restart. Every stage logs `update check: …` / `update download: …`
+  lines (§Logs in OPERATIONS), which is how headless smoke tests verify it.
+- **Debug builds** honour `RESEARCHAI_UPDATER_ENDPOINT=<url>` to aim the
+  check at a local manifest for end-to-end testing; release builds ignore
+  it, and downloads verify against the embedded pubkey either way.
+- **Linux deb caveat**: deb installs fall back to the `linux-x86_64`
+  (AppImage) entry and the plugin rejects the artefact safely
+  (`InvalidUpdaterFormat`) — deb users pull the new `.deb` from the
+  release manually.
+
 ## Icons
 
 Platform sets are generated from `src-tauri/icons/icon.png` via

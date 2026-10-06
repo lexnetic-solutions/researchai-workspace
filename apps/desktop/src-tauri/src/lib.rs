@@ -22,6 +22,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // Self-update: desktop-only plugin, registered before any
+            // command can run. Endpoints/pubkey come from tauri.conf.json.
+            #[cfg(desktop)]
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            app.manage(commands::updater::PendingUpdate::default());
+
             let handle = app.handle().clone();
             let data_dir = state::resolve_app_data_dir(&handle)?;
             logging::init(&data_dir)?;
@@ -94,6 +100,9 @@ pub fn run() {
             commands::system::log_frontend,
             commands::system::pick_folder,
             commands::system::pick_documents,
+            commands::updater::updater_check,
+            commands::updater::updater_install,
+            commands::updater::updater_restart,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ResearchAI Workspace");

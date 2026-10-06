@@ -59,6 +59,12 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
+    env:
+      # bundle.createUpdaterArtifacts requires the updater signing key when
+      # `tauri build` runs (see tauri.conf.json plugins.updater.pubkey).
+      # Every push therefore also rehearses real key usage end-to-end.
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -84,6 +90,34 @@ jobs:
         run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib --test contract_locks
       - name: Build desktop bundle
         run: pnpm --filter @researchai/desktop tauri build
+      # The updater config makes every `tauri build` sign its artefacts —
+      # assert the signature contract on every push so a signing break is
+      # caught here instead of at release time.
+      - name: Verify updater artefacts (tar.gz + signatures)
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLE_DIR="apps/desktop/src-tauri/target/release/bundle"
+          sig=$(find "$BUNDLE_DIR" -name '*.sig' -type f -print -quit)
+          if [ -z "$sig" ]; then
+            echo "::error::no updater signatures produced (signing key missing?)"
+            exit 1
+          fi
+          case '${{ matrix.target }}' in
+            *apple*)
+              test -n "$(find "$BUNDLE_DIR" -name '*.app.tar.gz' -type f -print -quit)" || {
+                echo "::error::no .app.tar.gz produced"; exit 1; }
+              ;;
+            *windows*)
+              test -n "$(find "$BUNDLE_DIR" -name '*-setup.exe.sig' -type f -print -quit)" || {
+                echo "::error::no NSIS setup.exe signature produced"; exit 1; }
+              ;;
+            *linux*)
+              test -n "$(find "$BUNDLE_DIR" -name '*.AppImage.sig' -type f -print -quit)" || {
+                echo "::error::no AppImage signature produced"; exit 1; }
+              ;;
+          esac
+          echo "updater artefacts OK for ${{ matrix.target }} (sig: $(basename "$sig"))"
       - name: Upload artefact
         uses: actions/upload-artifact@v4
         with:

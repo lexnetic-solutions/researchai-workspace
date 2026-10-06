@@ -104,10 +104,19 @@ Operations notes:
    to a generic body (never an empty one) and the dry-run rehearses the
    extraction step.
 4. Expected assets: `aarch64.dmg`, `x64.dmg`, `x64-setup.exe`,
-   `amd64.AppImage`, `amd64.deb` — all five attach within the run (the Intel
-   leg on `macos-15-intel` is slower than arm64 but no longer unbounded).
+   `amd64.AppImage`, `amd64.deb`, plus the updater artefacts
+   (`*_aarch64.app.tar.gz`, `*_x64.app.tar.gz` and one `.sig` per
+   updater artefact) and — from the final manifest job — `latest.json`,
+   which installed apps poll for self-updates. All assets attach within
+   the run (the Intel leg on `macos-15-intel` is slower than arm64 but no
+   longer unbounded); `latest.json` attaches only after every leg is done
+   and is skipped (job fails) if any signature is missing.
 5. Watch asset attachment at job level; an asset attaching *after* you edit
    the release is normal — assets attach automatically.
+6. Self-update gate: the release is only self-update-capable if the
+   `TAURI_SIGNING_PRIVATE_KEY*` secrets are set (they sign every artefact;
+   `ci.yml` asserts signatures on every push). Losing the key breaks
+   updates permanently — see PACKAGING.md.
 
 Tag discipline: tags are immutable history. If a release must include newer
 commits, cut a **new tag** (v0.1.x+1); do not re-point the old one unless you
@@ -125,9 +134,14 @@ gh workflow run release-dry-run.yml
 ```
 
 Same matrix and build steps as `release.yml`, artifacts instead of assets —
-use it to validate packaging changes without burning a tag. Remember that
-artifact uploads and bundle staging can differ subtly from a real release run
-(signed vs ad-hoc steps), so a green dry-run is necessary, not sufficient.
+use it to validate packaging changes without burning a tag. It also
+rehearses the updater path with an **ephemeral throwaway signing key**
+(never the release key), asserts the updater artefacts (`.app.tar.gz`,
+`.sig`) exist per leg, and builds `latest.json` in a final manifest job —
+but cannot upload anything (`permissions: contents: read`). Remember that
+artifact uploads and bundle staging can differ subtly from a real release
+run (signed vs ad-hoc steps), so a green dry-run is necessary, not
+sufficient.
 
 Pitfall fixed in this repo: decorative `find … | head -n` under `set -e -o
 pipefail` SIGPIPE-kills the step once a staging directory exceeds the head

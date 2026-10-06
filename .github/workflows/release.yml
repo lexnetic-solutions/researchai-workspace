@@ -45,6 +45,11 @@ jobs:
       # identity and codesign fails. Gate the signing steps on this instead.
       HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
       HAS_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
+      # Updater signing (bundle.createUpdaterArtifacts + plugins.updater):
+      # `tauri build` signs every updater artefact with this key. The
+      # manifest job later fails the release if any .sig is missing.
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -131,6 +136,33 @@ jobs:
         if: env.HAS_SIGNING_IDENTITY != 'true'
         run: pnpm --filter @researchai/desktop exec tauri build --target ${{ matrix.target }}
 
+      # The macOS updater archive is named after the .app bundle
+      # ("ResearchAI Workspace.app.tar.gz") — identical on both mac legs.
+      # Arch-qualify it (and its .sig) so the release assets cannot collide
+      # and so make-updater-manifest.sh can glob one archive per arch.
+      - name: Arch-qualify the macOS updater archive
+        if: runner.os == 'MacOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIR="apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos"
+          VERSION=$(jq -r '.version' apps/desktop/src-tauri/tauri.conf.json)
+          case '${{ matrix.target }}' in
+            aarch64-*) ARCH=aarch64 ;;
+            x86_64-*)  ARCH=x64 ;;
+            *) echo "::error::unexpected target ${{ matrix.target }}"; exit 1 ;;
+          esac
+          SRC="$DIR/ResearchAI Workspace.app.tar.gz"
+          DST="$DIR/ResearchAI.Workspace_${VERSION}_${ARCH}.app.tar.gz"
+          if [ ! -f "$SRC" ] || [ ! -f "$SRC.sig" ]; then
+            echo "::error::updater archive missing: $SRC(.sig)"
+            ls -la "$DIR"
+            exit 1
+          fi
+          mv "$SRC" "$DST"
+          mv "$SRC.sig" "$DST.sig"
+          echo "updater archive: $(basename "$DST") ($(wc -c < "$DST") bytes)"
+
       - name: Upload artefacts
         uses: actions/upload-artifact@v4
         with:
@@ -138,9 +170,11 @@ jobs:
           path: |
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app.tar.gz
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.sig
 
       # The release body comes from the stamped CHANGELOG section for this
       # tag (release-bump stamps it before tagging). An empty extraction
@@ -169,3 +203,44 @@ jobs:
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app.tar.gz
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.sig
+
+  # Static updater manifest: installed apps poll
+  #   https://github.com/<repo>/releases/latest/download/latest.json
+  # so the release must carry it alongside the installers. Runs after every
+  # matrix leg has attached its assets; the script hard-fails when an
+  # artefact or its .sig is missing, leaving the release without a manifest
+  # rather than publishing one that would break self-update.
+  manifest:
+    name: Updater manifest (latest.json)
+    needs: bundles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: updater-artifacts
+
+      - name: Build latest.json from the signed updater artefacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The release body (stamped CHANGELOG section) doubles as the
+          # manifest's user-facing `notes` field.
+          gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" \
+            --json body -q .body > release-notes.md
+          scripts/release/make-updater-manifest.sh \
+            --tag "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --artifacts updater-artifacts \
+            --notes release-notes.md \
+            --out latest.json
+          jq . latest.json
+
+      - name: Attach manifest to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" latest.json --clobber -R "$GITHUB_REPOSITORY"

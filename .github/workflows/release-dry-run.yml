@@ -21,6 +21,7 @@ on:
       - '.github/workflows/release-dry-run.yml'
       - 'scripts/package/collect-sidecar.mjs'
       - 'scripts/release/extract-notes.sh'
+      - 'scripts/release/make-updater-manifest.sh'
       - 'CHANGELOG.md'
       - 'services/document-engine/packaging/pyinstaller.spec'
       - 'services/document-engine/src/researchai_document_engine/run.py'
@@ -104,6 +105,20 @@ jobs:
 
       - run: pnpm install --frozen-lockfile=false
 
+      # The updater config (tauri.conf.json plugins.updater.pubkey) makes
+      # `tauri build` sign artefacts. Rehearse that path with an ephemeral
+      # throwaway key — deliberately NOT the release key, so a dry run can
+      # never produce anything an installed app would accept.
+      - name: Generate ephemeral updater signing key (rehearsal)
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter @researchai/desktop exec tauri signer generate \
+            --ci -p dry-run-ephemeral -f \
+            -w "$RUNNER_TEMP/updater-dry-run.key"
+          echo "TAURI_SIGNING_PRIVATE_KEY=$RUNNER_TEMP/updater-dry-run.key" >> "$GITHUB_ENV"
+          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=dry-run-ephemeral" >> "$GITHUB_ENV"
+
       - name: Freeze document engine (PyInstaller)
         working-directory: services/document-engine
         run: |
@@ -121,6 +136,31 @@ jobs:
       - name: Build installers (ad-hoc signed, dry-run)
         run: pnpm --filter @researchai/desktop exec tauri build --target ${{ matrix.target }}
 
+      # Mirror release.yml: arch-qualify the macOS updater archive so the
+      # manifest rehearsal below can glob one archive per architecture.
+      - name: Arch-qualify the macOS updater archive (rehearsal)
+        if: runner.os == 'MacOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIR="apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos"
+          VERSION=$(jq -r '.version' apps/desktop/src-tauri/tauri.conf.json)
+          case '${{ matrix.target }}' in
+            aarch64-*) ARCH=aarch64 ;;
+            x86_64-*)  ARCH=x64 ;;
+            *) echo "::error::unexpected target ${{ matrix.target }}"; exit 1 ;;
+          esac
+          SRC="$DIR/ResearchAI Workspace.app.tar.gz"
+          DST="$DIR/ResearchAI.Workspace_${VERSION}_${ARCH}.app.tar.gz"
+          if [ ! -f "$SRC" ] || [ ! -f "$SRC.sig" ]; then
+            echo "::error::updater archive missing: $SRC(.sig)"
+            ls -la "$DIR"
+            exit 1
+          fi
+          mv "$SRC" "$DST"
+          mv "$SRC.sig" "$DST.sig"
+          echo "updater archive: $(basename "$DST") ($(wc -c < "$DST") bytes)"
+
       - name: Verify bundles produced
         shell: bash
         run: |
@@ -136,14 +176,22 @@ jobs:
                 echo "::error::no .dmg produced"; exit 1; }
               test -n "$(find "$BUNDLE_DIR" -name '*.app' -type d -print -quit)" || {
                 echo "::error::no .app produced"; exit 1; }
+              test -n "$(find "$BUNDLE_DIR" -name '*.app.tar.gz' -type f -print -quit)" || {
+                echo "::error::no updater bundle (.app.tar.gz) produced"; exit 1; }
+              test -n "$(find "$BUNDLE_DIR" -name '*.app.tar.gz.sig' -type f -print -quit)" || {
+                echo "::error::no updater signature (.app.tar.gz.sig) produced"; exit 1; }
               ;;
             *windows*)
               test -n "$(find "$BUNDLE_DIR" -name '*.exe' -type f -print -quit)" || {
                 echo "::error::no .exe produced"; exit 1; }
+              test -n "$(find "$BUNDLE_DIR" -name '*-setup.exe.sig' -type f -print -quit)" || {
+                echo "::error::no NSIS updater signature produced"; exit 1; }
               ;;
             *linux*)
               test -n "$(find "$BUNDLE_DIR" -name '*.AppImage' -type f -print -quit)" || {
                 echo "::error::no .AppImage produced"; exit 1; }
+              test -n "$(find "$BUNDLE_DIR" -name '*.AppImage.sig' -type f -print -quit)" || {
+                echo "::error::no AppImage updater signature produced"; exit 1; }
               test -n "$(find "$BUNDLE_DIR" -name '*.deb' -type f -print -quit)" || {
                 echo "::error::no .deb produced"; exit 1; }
               ;;
@@ -181,9 +229,11 @@ jobs:
           path: |
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app.tar.gz
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
             apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
+            apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.sig
           retention-days: 7
 
       - name: Summary
@@ -197,5 +247,38 @@ jobs:
             echo "| --- | --- |"
             echo "| Installers built | ${{ job.status == 'success' && '✅' || '❌' }} |"
             echo "| Sidecar shipped | see 'Verify sidecar shipped inside the bundle' step |"
+            echo "| Updater artefacts (.tar.gz/.sig) | see 'Verify bundles produced' step |"
             echo "| Published to a GitHub release | **never** (read-only token) |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Rehearse release.yml's manifest job: download every matrix leg's signed
+  # artefacts and build latest.json exactly as a real release would (minus
+  # the upload — this workflow's token is read-only).
+  manifest:
+    name: Dry-run · updater manifest
+    needs: bundles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: researchai-dry-run-*
+          path: updater-artifacts
+
+      - name: Manifest script self-test
+        run: bash scripts/release/make-updater-manifest.sh --self-test
+
+      - name: Build latest.json (rehearsal)
+        run: |
+          set -euo pipefail
+          VER=$(grep -m1 -E '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' CHANGELOG.md \
+            | sed -E 's/^## \[([^]]+)\].*/\1/')
+          scripts/release/make-updater-manifest.sh \
+            --tag "v$VER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --artifacts updater-artifacts \
+            --out latest.json
+          jq -e '.platforms | keys | length == 8' latest.json >/dev/null
+          echo "Manifest rehearsal OK for v$VER"
+          jq '{version, pub_date, platforms: (.platforms | keys)}' latest.json

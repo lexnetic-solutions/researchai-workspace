@@ -55,6 +55,22 @@ import type {
 /** True when running inside the Tauri shell. */
 export const isNative = '__TAURI_INTERNALS__' in window;
 
+// -- Self-update ------------------------------------------------------------
+
+/** Announcement returned by the updater check (null = already current). */
+export interface UpdateInfo {
+  version: string;
+  currentVersion: string;
+  notes: string | null;
+  date: string | null;
+}
+
+/** Throttled download progress emitted by the Rust updater command. */
+export interface UpdateDownloadProgress {
+  downloaded: number;
+  contentLength: number | null;
+}
+
 export async function invoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
@@ -212,6 +228,11 @@ export const backend = {
   ttsConvertToMp3: (path: string) => invoke<TtsAudio>('tts_convert_to_mp3', { path }),
 
   probeDocumentEngine: () => invoke<boolean>('probe_document_engine'),
+
+  // -- Self-update (Tauri updater plugin; no-op in browser preview) --------
+  updaterCheck: () => invoke<UpdateInfo | null>('updater_check'),
+  updaterInstall: () => invoke<void>('updater_install'),
+  updaterRestart: () => invoke<void>('updater_restart'),
 };
 
 /** Subscribe to model-download progress events (no-op in browser preview). */
@@ -232,6 +253,17 @@ export async function onAskDelta(
   if (!isNative) return () => {};
   const unlisten = await listen<{ text: string }>('ai://ask-delta', (e) =>
     handler(e.payload.text),
+  );
+  return unlisten;
+}
+
+/** Subscribe to update download progress events (no-op in browser preview). */
+export async function onUpdaterProgress(
+  handler: (ev: UpdateDownloadProgress) => void,
+): Promise<() => void> {
+  if (!isNative) return () => {};
+  const unlisten = await listen<UpdateDownloadProgress>('updater://progress', (e) =>
+    handler(e.payload),
   );
   return unlisten;
 }
@@ -1063,6 +1095,12 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
       const words = kind === 'podcast' ? 1200 : kind === 'summary_20' ? 2600 : kind === 'summary_10' ? 1300 : 650;
       return mockNarration(name, words, kind === 'podcast' ? 'llama.cpp' : 'llama.cpp') as T;
     }
+    // -- Self-update: nothing to update to in the browser preview ----------
+    case 'updater_check':
+      return null as T;
+    case 'updater_install':
+    case 'updater_restart':
+      return null as T;
     default:
       throw new Error(`Browser preview has no mock for command "${cmd}".`);
   }

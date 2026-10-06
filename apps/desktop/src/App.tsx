@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import { backend } from './backend/client';
+import { backend, onUpdaterProgress } from './backend/client';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { TitleBar } from './components/TitleBar';
@@ -84,6 +84,58 @@ export default function App() {
       unlisten?.();
     };
   }, [native, activeProject, requestImport, setView, pushToast]);
+
+  // Self-update: check the release channel a few seconds after startup and
+  // offer an available release through an actionable toast (download →
+  // install → restart). Progress and failures are written to the app log so
+  // headless runs can verify the path without seeing the UI.
+  useEffect(() => {
+    if (!native) return;
+    let cancelled = false;
+    let installing = false;
+    let progressUnlisten: (() => void) | undefined;
+    void onUpdaterProgress((p) => {
+      const total = p.contentLength ? `/${p.contentLength}` : '';
+      void backend.logFrontend(`update download: ${p.downloaded}${total} bytes`);
+    }).then((fn) => {
+      if (cancelled) fn();
+      else progressUnlisten = fn;
+    });
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const update = await backend.updaterCheck();
+          if (cancelled || !update) return;
+          pushToast('info', `Update ${update.version} is available.`, {
+            label: 'Download & restart',
+            onClick: () => {
+              if (installing) return;
+              installing = true;
+              void (async () => {
+                try {
+                  await backend.updaterInstall();
+                  pushToast('success', `Update ${update.version} installed — restarting…`);
+                  window.setTimeout(() => void backend.updaterRestart(), 1500);
+                } catch (err) {
+                  installing = false;
+                  pushToast('error', `Update failed: ${String(err)}`);
+                }
+              })();
+            },
+          });
+        } catch (err) {
+          // Offline or manifest unreachable — expected on machines without
+          // network, so no toast; the log line is there for diagnosis.
+          void backend.logFrontend(`update check failed: ${String(err)}`);
+        }
+      })();
+    }, 6000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      progressUnlisten?.();
+    };
+  }, [native, pushToast]);
 
   // Audio playback self-check: a media failure in the packaged build is
   // invisible (the player just shows "Error"), so verify once at startup

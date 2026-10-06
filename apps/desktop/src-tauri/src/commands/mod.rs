@@ -9,3 +9,4 @@ pub mod projects;
 pub mod stt;
 pub mod system;
 pub mod tts;
+pub mod updater;

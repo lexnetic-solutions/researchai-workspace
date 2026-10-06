@@ -987,6 +987,17 @@ code { font-family: var(--font-mono); font-size: 0.92em; background: var(--bg-in
 .toast-info { border-left: 3px solid var(--accent); }
 
 .toast-message { flex: 1; }
+.toast-action {
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.toast-action:hover { filter: brightness(1.1); }
 .toast-dismiss {
   border: none;
   background: none;
