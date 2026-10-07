@@ -40,6 +40,10 @@ concurrency:
 jobs:
   bundles:
     name: Dry-run · ${{ matrix.os }}
+    # pathway-solutions is a private MIRROR of this repo where Actions
+    # minutes are capped (billing blocked) — skip there; dry-runs run on
+    # the public repo, whose Actions minutes are free.
+    if: github.repository == 'lexnetic-solutions/researchai-workspace'
     strategy:
       fail-fast: false
       matrix:
@@ -258,6 +262,7 @@ jobs:
   manifest:
     name: Dry-run · updater manifest
     needs: bundles
+    if: github.repository == 'lexnetic-solutions/researchai-workspace' && success()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

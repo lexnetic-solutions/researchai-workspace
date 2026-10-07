@@ -13,6 +13,10 @@ concurrency:
 jobs:
   web:
     name: TypeScript · test & typecheck
+    # pathway-solutions is a private MIRROR of this repo where Actions
+    # minutes are capped (billing blocked) — skip there; full CI runs on
+    # the public repo, whose Actions minutes are free.
+    if: github.repository == 'lexnetic-solutions/researchai-workspace'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +32,7 @@ jobs:
 
   engine:
     name: Python · document engine
+    if: github.repository == 'lexnetic-solutions/researchai-workspace'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +49,7 @@ jobs:
   desktop:
     name: Desktop · ${{ matrix.os }}
     needs: [web, engine]
-    if: github.event_name == 'push'
+    if: github.repository == 'lexnetic-solutions/researchai-workspace' && github.event_name == 'push'
     strategy:
       fail-fast: false
       matrix:

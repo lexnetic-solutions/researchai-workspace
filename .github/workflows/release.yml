@@ -25,6 +25,10 @@ concurrency:
 jobs:
   bundles:
     name: Installers · ${{ matrix.os }}
+    # pathway-solutions is a private MIRROR of this repo where Actions
+    # minutes are capped (billing blocked) — skip there; releases publish
+    # from the public repo, whose Actions minutes are free.
+    if: github.repository == 'lexnetic-solutions/researchai-workspace'
     strategy:
       fail-fast: false
       matrix:
@@ -215,6 +219,7 @@ jobs:
   manifest:
     name: Updater manifest (latest.json)
     needs: bundles
+    if: github.repository == 'lexnetic-solutions/researchai-workspace' && success()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
